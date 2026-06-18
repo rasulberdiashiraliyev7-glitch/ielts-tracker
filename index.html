@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IELTS Progress Tracker — Track Your Band Scores</title>
+  <meta name="description" content="Free IELTS progress tracker. Log your Listening, Reading, Writing and Speaking results and watch your band scores grow toward your goal with live charts." />
+  <meta name="keywords" content="IELTS, IELTS tracker, band score, IELTS progress, IELTS practice, listening reading writing speaking, IELTS Academic" />
+  <meta name="author" content="IELTS Progress Tracker" />
+  <meta name="robots" content="index, follow" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="IELTS Progress Tracker" />
+  <meta property="og:description" content="Track your IELTS band scores across all four skills and visualize your growth toward your goal." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='22'%20fill='%230d9488'/%3E%3Ctext%20x='50'%20y='72'%20font-size='60'%20font-family='Arial'%20font-weight='bold'%20fill='white'%20text-anchor='middle'%3EI%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">IELTS</span>
+        <span class="brand-name">Progress Tracker</span>
+      </div>
+      <nav class="nav">
+        <a href="#dashboard" class="nav-link active">Dashboard</a>
+        <a href="#charts" class="nav-link">Growth</a>
+        <a href="#history" class="nav-link">History</a>
+      </nav>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" id="sampleBtn" title="Load demo data">★ Demo data</button>
+        <div class="avatar" id="avatar">R</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container" id="dashboard">
+    <!-- ===== Page head ===== -->
+    <div class="page-head">
+      <div>
+        <h1>My IELTS Progress <span class="pill pill-active">TRACKING</span></h1>
+        <p class="subtitle">Log each mock test and watch your band scores climb toward your goal.</p>
+      </div>
+      <div class="head-actions">
+        <button class="btn btn-ghost" id="exportBtn" title="Download a backup file">⬇ Export</button>
+        <button class="btn btn-ghost" id="importBtn" title="Restore from a backup file">⬆ Import</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden />
+        <button class="btn btn-danger-outline" id="resetBtn">🗑 Reset all</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- ===================== LEFT COLUMN ===================== -->
+      <aside class="col-left">
+        <!-- Overall progress ring -->
+        <section class="card overall-card">
+          <div class="card-head">
+            <h2>Overall Progress</h2>
+            <span class="card-icon">📈</span>
+          </div>
+
+          <div class="ring-wrap">
+            <svg class="ring" viewBox="0 0 200 200" width="190" height="190">
+              <circle class="ring-track" cx="100" cy="100" r="84" />
+              <circle class="ring-fill" id="ringFill" cx="100" cy="100" r="84" />
+            </svg>
+            <div class="ring-center">
+              <div class="ring-scores">
+                <span class="ring-target" id="ringTarget">—</span>
+                <span class="ring-current"><span class="ring-slash">/</span><span id="ringCurrent">—</span></span>
+              </div>
+              <span class="ring-label">Target / Now</span>
+            </div>
+          </div>
+
+          <div class="overall-meta">
+            <div class="meta-row">
+              <span>Tests logged</span>
+              <strong id="testCount">0</strong>
+            </div>
+            <div class="meta-row">
+              <span>Target band</span>
+              <strong id="overallTarget">—</strong>
+            </div>
+            <div class="meta-row">
+              <span>To go</span>
+              <strong id="overallToGo" class="accent">—</strong>
+            </div>
+          </div>
+
+          <div class="target-chips" id="targetChips"></div>
+        </section>
+
+        <!-- Target setting -->
+        <section class="card targets-card">
+          <div class="card-head">
+            <h2>Your Goal</h2>
+            <span class="card-icon">🎯</span>
+          </div>
+          <p class="hint">Set the band score you want for each skill.</p>
+          <div class="target-grid" id="targetInputs">
+            <!-- target inputs injected by JS -->
+          </div>
+        </section>
+
+        <!-- Motivational dark card -->
+        <section class="card next-card">
+          <div class="next-icon">🚀</div>
+          <div>
+            <p class="next-label">Keep going</p>
+            <p class="next-title" id="motivTitle">Log your first test</p>
+            <p class="next-text" id="motivText">Enter your scores on the right to start tracking your progress.</p>
+          </div>
+        </section>
+      </aside>
+
+      <!-- ===================== RIGHT COLUMN ===================== -->
+      <div class="col-right">
+        <!-- ENTRY FORM -->
+        <section class="card entry-card">
+          <div class="card-head">
+            <h2>Add Test Result</h2>
+            <span class="card-icon">✏️</span>
+          </div>
+
+          <div class="form-top">
+            <label class="field">
+              <span class="field-label">Test date</span>
+              <input type="date" id="dateInput" class="input" />
+            </label>
+            <label class="field">
+              <span class="field-label">Label <em>(optional)</em></span>
+              <input type="text" id="labelInput" class="input" placeholder="e.g. Cambridge 18 Test 2" />
+            </label>
+          </div>
+
+          <div class="skill-inputs">
+            <!-- Listening -->
+            <div class="skill-block" data-skill="listening">
+              <div class="skill-block-head">
+                <span class="skill-dot" style="--c:var(--listening)"></span>
+                <h3>Listening</h3>
+                <span class="live-band" id="liveListening">— / 40</span>
+              </div>
+              <div class="mini-grid">
+                <label><span>Sec 1</span><input type="number" min="0" max="10" class="input num l-sec" /></label>
+                <label><span>Sec 2</span><input type="number" min="0" max="10" class="input num l-sec" /></label>
+                <label><span>Sec 3</span><input type="number" min="0" max="10" class="input num l-sec" /></label>
+                <label><span>Sec 4</span><input type="number" min="0" max="10" class="input num l-sec" /></label>
+              </div>
+            </div>
+
+            <!-- Reading -->
+            <div class="skill-block" data-skill="reading">
+              <div class="skill-block-head">
+                <span class="skill-dot" style="--c:var(--reading)"></span>
+                <h3>Reading</h3>
+                <span class="live-band" id="liveReading">— / 40</span>
+              </div>
+              <div class="mini-grid mini-grid-3">
+                <label><span>Passage 1</span><input type="number" min="0" max="20" class="input num r-pas" /></label>
+                <label><span>Passage 2</span><input type="number" min="0" max="20" class="input num r-pas" /></label>
+                <label><span>Passage 3</span><input type="number" min="0" max="20" class="input num r-pas" /></label>
+              </div>
+            </div>
+
+            <!-- Writing -->
+            <div class="skill-block" data-skill="writing">
+              <div class="skill-block-head">
+                <span class="skill-dot" style="--c:var(--writing)"></span>
+                <h3>Writing</h3>
+                <span class="live-band" id="liveWriting">—</span>
+              </div>
+              <div class="mini-grid">
+                <label><span>Task 1 band</span>
+                  <select class="input w-task" id="wTask1"></select>
+                </label>
+                <label><span>Task 2 band</span>
+                  <select class="input w-task" id="wTask2"></select>
+                </label>
+              </div>
+              <p class="tiny-hint">Task 2 counts double, like the real exam.</p>
+            </div>
+
+            <!-- Speaking -->
+            <div class="skill-block" data-skill="speaking">
+              <div class="skill-block-head">
+                <span class="skill-dot" style="--c:var(--speaking)"></span>
+                <h3>Speaking</h3>
+                <span class="live-band" id="liveSpeaking">—</span>
+              </div>
+              <div class="mini-grid">
+                <label><span>Band score</span>
+                  <select class="input s-band" id="sBand"></select>
+                </label>
+                <div class="band-note">
+                  <span>Examiner-assessed band (0–9).</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <span class="form-hint">Same date &amp; label = one row. Fill the skills you practised — empty ones are skipped.</span>
+            <button class="btn btn-primary" id="saveBtn">＋ Save result</button>
+          </div>
+        </section>
+
+        <!-- SKILL PROGRESS BARS -->
+        <section class="card skills-card">
+          <div class="card-head">
+            <h2>Distance to Goal</h2>
+            <span class="card-icon">🏁</span>
+          </div>
+          <div class="skill-progress-list" id="skillProgress">
+            <!-- injected -->
+          </div>
+        </section>
+
+        <!-- GROWTH CHART -->
+        <section class="card chart-card" id="charts">
+          <div class="card-head">
+            <h2>Score Growth</h2>
+            <div class="chart-legend" id="chartLegend"></div>
+          </div>
+          <div class="chart-box">
+            <canvas id="growthChart"></canvas>
+          </div>
+          <p class="empty-note" id="chartEmpty">No data yet — add a test result or load demo data to see your growth.</p>
+        </section>
+
+        <!-- HISTORY -->
+        <section class="card history-card" id="history">
+          <div class="card-head">
+            <h2>Test History</h2>
+            <span class="card-icon">🗂</span>
+          </div>
+          <div class="table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Label</th>
+                  <th>L</th><th>R</th><th>W</th><th>S</th>
+                  <th>Overall</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+          <p class="empty-note" id="historyEmpty">Your saved tests will appear here.</p>
+        </section>
+      </div>
+    </div>
+
+    <footer class="footer">
+      Built for tracking IELTS Academic progress · Data stays in your browser.
+    </footer>
+  </main>
+
+  <!-- toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
