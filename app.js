@@ -472,28 +472,6 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-/* ----- Demo data ----- */
-function loadSample() {
-  state.targets = { listening: 8, reading: 7.5, writing: 7, speaking: 7 };
-  const mk = (date, l, r, w, s) => ({
-    id: 'a' + Math.random().toString(36).slice(2),
-    date,
-    listening: { raw: l, band: listeningBand(l) },
-    reading: { raw: r, band: readingBand(r) },
-    writing: { band: w },
-    speaking: { band: s },
-  });
-  state.attempts = [
-    mk('2026-04-12', 24, 22, 5.5, 5.5),
-    mk('2026-04-28', 27, 25, 6,   6),
-    mk('2026-05-15', 30, 28, 6,   6.5),
-    mk('2026-06-02', 33, 31, 6.5, 6.5),
-    mk('2026-06-16', 35, 33, 7,   7),
-  ];
-  save(); render();
-  toast('Demo data loaded — try editing your goals!');
-}
-
 /* =====================================================================
    INIT
    ===================================================================== */
@@ -510,7 +488,6 @@ function init() {
 
   // events
   document.getElementById('saveBtn').addEventListener('click', saveAttempt);
-  document.getElementById('sampleBtn').addEventListener('click', loadSample);
   document.getElementById('resetBtn').addEventListener('click', () => {
     if (confirm('Delete ALL saved tests and reset goals?')) {
       state = { targets: { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 }, attempts: [] };
