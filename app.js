@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '7';
+const BUILD = '8';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -52,17 +52,31 @@ function normalizeState(data) {
 }
 
 /* Direct REST call to a Postgres function — plain fetch, no supabase-js,
-   so there is no auth lock that can deadlock and freeze the UI. */
+   so there is no auth lock that can deadlock and freeze the UI.
+   Retries automatically on transient network drops (flaky connections). */
+async function rpcFetch(fn, args, attempt) {
+  attempt = attempt || 1;
+  try {
+    return await withTimeout(fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: {
+        apikey: window.SUPABASE_KEY,
+        Authorization: 'Bearer ' + window.SUPABASE_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args),
+    }), 12000);
+  } catch (e) {
+    const transient = /failed to fetch|networkerror|load failed|timed out/i.test(e.message || '');
+    if (transient && attempt < 3) {
+      await new Promise(r => setTimeout(r, 600 * attempt));
+      return rpcFetch(fn, args, attempt + 1);
+    }
+    throw e;
+  }
+}
 async function rpc(fn, args) {
-  const res = await withTimeout(fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-    method: 'POST',
-    headers: {
-      apikey: window.SUPABASE_KEY,
-      Authorization: 'Bearer ' + window.SUPABASE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(args),
-  }), 12000);
+  const res = await rpcFetch(fn, args);
   const text = await res.text();
   if (!res.ok) {
     let msg = text;
@@ -292,6 +306,7 @@ function formatDate(d) {
 
 /* ----- Growth chart ----- */
 function renderChart() {
+  if (typeof Chart === 'undefined') return;  // chart library unavailable — skip gracefully
   const list = sortedAttempts();
   const empty = document.getElementById('chartEmpty');
   const box = document.querySelector('.chart-box');
@@ -833,6 +848,7 @@ function openStudentDetail(r) {
 }
 
 function drawAdminChart(atts) {
+  if (typeof Chart === 'undefined') return;
   const labels = atts.map(a => a.label ? a.label : formatDate(a.date));
   const ds = SKILLS.map(s => ({
     label: s.name, data: atts.map(a => a[s.key]?.band ?? null),
