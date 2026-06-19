@@ -582,7 +582,7 @@ function setupAuthUI() {
     e.preventDefault();
     if (!sb) return;
     const email = document.getElementById('auEmail').value.trim();
-    const pass = document.getElementById('auPass').value;
+    const pass = document.getElementById('auPass').value.trim();
     const first = document.getElementById('auFirst').value.trim();
     const last = document.getElementById('auLast').value.trim();
     submit.disabled = true;
