@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '6';
+const BUILD = '7';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -40,16 +40,36 @@ let state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
 let chart = null;
 
 /* ---------- Cloud / auth globals ---------- */
-let sb = null;            // Supabase client
-let currentUser = null;   // { id, firstName, lastName, email, role }
-let loadedUserId = null;
+let currentUser = null;   // { id, fullName, login, role, pin }
 let cloudTimer = null;
+const SESSION_KEY = 'ielts_session_v1';
 
 function normalizeState(data) {
   const s = (data && typeof data === 'object') ? data : {};
   if (!s.targets) s.targets = { ...DEFAULT_TARGETS };
   if (!Array.isArray(s.attempts)) s.attempts = [];
   return s;
+}
+
+/* Direct REST call to a Postgres function — plain fetch, no supabase-js,
+   so there is no auth lock that can deadlock and freeze the UI. */
+async function rpc(fn, args) {
+  const res = await withTimeout(fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+    method: 'POST',
+    headers: {
+      apikey: window.SUPABASE_KEY,
+      Authorization: 'Bearer ' + window.SUPABASE_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  }), 12000);
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = text;
+    try { msg = JSON.parse(text).message || msg; } catch (e) {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  return text ? JSON.parse(text) : null;
 }
 
 /* save = local cache (per user) + debounced cloud save */
@@ -61,16 +81,12 @@ function save() {
 }
 function scheduleCloudSave() {
   clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(cloudSaveNow, 700);
+  cloudTimer = setTimeout(cloudSaveNow, 800);
 }
 async function cloudSaveNow() {
-  if (!currentUser || !sb) return;
-  try {
-    const { error } = await withTimeout(sb.from('profiles')
-      .update({ data: state, updated_at: new Date().toISOString() })
-      .eq('id', currentUser.id), 15000);
-    if (error) console.warn('cloud save:', error.message);
-  } catch (e) { /* keep local copy; will retry on next change */ }
+  if (!currentUser) return;
+  try { await rpc('app_save', { p_id: currentUser.id, p_pin: currentUser.pin, p_data: state }); }
+  catch (e) { /* keep local copy; retries on next change */ }
 }
 
 /* ---------- Helpers ---------- */
@@ -540,37 +556,22 @@ function init() {
   document.getElementById('signOutBtn').addEventListener('click', doSignOut);
 
   setupAuthUI();
-  initSupabase();
+  initCloud();
 }
 
 /* =====================================================================
    AUTH + CLOUD
    ===================================================================== */
-function initSupabase() {
-  if (!window.SUPABASE_URL || !window.SUPABASE_KEY || !window.supabase) {
+function initCloud() {
+  if (!window.SUPABASE_URL || !window.SUPABASE_KEY) {
     showAuth();
     setAuthMsg('Cloud is not configured yet.', 'error');
     return;
   }
-  sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: false,
-      // Bypass the navigator.locks lock, which can deadlock and leave
-      // sign-in/sign-up stuck on "Please wait..." forever.
-      lock: async (_name, _acquireTimeout, fn) => fn(),
-    },
-  });
-  sb.auth.onAuthStateChange((event, session) => {
-    // Defer any Supabase calls out of this callback — calling the DB
-    // directly here can deadlock GoTrue's internal auth lock.
-    if (session && session.user) {
-      setTimeout(() => onSignedIn(session), 0);
-    } else {
-      loadedUserId = null; currentUser = null; showAuth();
-    }
-  });
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
+  if (s && s.id && s.pin) resumeSession(s);
+  else showAuth();
 }
 
 function setupAuthUI() {
@@ -594,24 +595,43 @@ function setupAuthUI() {
 
   document.getElementById('authForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!sb) return;
     const email = document.getElementById('auEmail').value.trim();
     const pass = document.getElementById('auPass').value.trim();
     const first = document.getElementById('auFirst').value.trim();
     const last = document.getElementById('auLast').value.trim();
+    if (!email || !pass) { setAuthMsg('Enter your email and password.', 'error'); return; }
     submit.disabled = true;
     setAuthMsg('Please wait…', '');
     try {
+      let prof;
       if (mode === 'signup') {
         if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
-        const { data, error } = await withTimeout(sb.auth.signUp({
-          email, password: pass, options: { data: { first_name: first, last_name: last } }
-        }), 15000);
-        if (error) { setAuthMsg(error.message, 'error'); return; }
-        if (!data.session) { setAuthMsg('Account created! Confirm your email, then sign in.', 'ok'); setMode('login'); return; }
+        try {
+          await rpc('app_signup', { p_name: (first + ' ' + last).trim(), p_login: email, p_pin: pass });
+        } catch (err) {
+          if (err.status === 409 || /duplicate|already|unique/i.test(err.message)) {
+            setAuthMsg('This email is already registered — use Sign in.', 'error'); setMode('login'); return;
+          }
+          throw err;
+        }
+        const rows = await rpc('app_login', { p_login: email, p_pin: pass });
+        prof = rows && rows[0];
       } else {
-        const { error } = await withTimeout(sb.auth.signInWithPassword({ email, password: pass }), 15000);
-        if (error) { setAuthMsg(error.message, 'error'); return; }
+        const rows = await rpc('app_login', { p_login: email, p_pin: pass });
+        if (!rows || !rows.length) { setAuthMsg('Wrong email or password.', 'error'); return; }
+        prof = rows[0];
+      }
+      if (prof) {
+        currentUser = {
+          id: prof.id, fullName: prof.full_name, login: prof.login,
+          role: prof.is_admin ? 'admin' : 'student', pin: pass,
+        };
+        saveSession();
+        state = normalizeState(prof.data);
+        consolidate();
+        showApp();
+        render(); updateLive();
+        setAuthMsg('', '');
       }
     } catch (err) {
       setAuthMsg(err.message || 'Connection timed out. Please try again.', 'error');
@@ -642,60 +662,51 @@ function loadCache(uid) {
   return null;
 }
 
-async function fetchProfile(uid) {
-  const { data, error } = await sb.from('profiles')
-    .select('first_name,last_name,email,role,data').eq('id', uid).maybeSingle();
-  if (error) { console.warn('profile load:', error.message); return null; }
-  return data;
+function saveSession() {
+  if (!currentUser) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      id: currentUser.id, login: currentUser.login, pin: currentUser.pin,
+      fullName: currentUser.fullName, role: currentUser.role,
+    }));
+  } catch (e) {}
 }
 
-async function onSignedIn(session) {
-  const uid = session.user.id;
-  if (loadedUserId === uid) return;
-  loadedUserId = uid;
-  const meta = session.user.user_metadata || {};
+function applyProfile(prof) {
+  currentUser.fullName = prof.full_name || currentUser.fullName;
+  currentUser.login = prof.login || currentUser.login;
+  currentUser.role = prof.is_admin ? 'admin' : 'student';
+  saveSession();
+  if (prof.data && (prof.data.attempts || prof.data.targets)) {
+    state = normalizeState(prof.data);
+    consolidate();
+  }
+  refreshTopbar();
+  render(); updateLive();
+}
 
-  // 1) Show the app IMMEDIATELY from cache — never block the UI on the network
+// Resume a saved login: show app instantly from cache, verify in background
+async function resumeSession(s) {
   currentUser = {
-    id: uid, role: 'student',
-    firstName: meta.first_name || '', lastName: meta.last_name || '',
-    email: session.user.email,
+    id: s.id, fullName: s.fullName || '', login: s.login || '',
+    role: s.role || 'student', pin: s.pin,
   };
-  state = normalizeState(loadCache(uid));
+  state = normalizeState(loadCache(s.id));
   showApp();
   render(); updateLive();
-
-  // 2) Sync the real profile from the cloud in the background (time-boxed)
   try {
-    let prof = await withTimeout(fetchProfile(uid), 12000);
-    if (!prof) {
-      await withTimeout(sb.from('profiles').insert({
-        id: uid, email: session.user.email,
-        first_name: meta.first_name || '', last_name: meta.last_name || '',
-      }), 12000);
-      prof = await withTimeout(fetchProfile(uid), 12000);
-    }
-    if (prof) {
-      currentUser.role = prof.role || 'student';
-      currentUser.firstName = prof.first_name || currentUser.firstName;
-      currentUser.lastName = prof.last_name || currentUser.lastName;
-      currentUser.email = prof.email || currentUser.email;
-      if (prof.data && (prof.data.attempts || prof.data.targets)) {
-        state = normalizeState(prof.data);
-        consolidate();
-      }
-      refreshTopbar();
-      render(); updateLive();
-    }
+    const rows = await rpc('app_login', { p_login: s.login, p_pin: s.pin });
+    if (rows && rows.length) applyProfile(rows[0]);
+    else doSignOut();
   } catch (e) {
-    toast('Slow connection — your data is saved on this device and will sync later.');
+    toast('Slow connection — showing your saved data.');
   }
 }
 
-async function doSignOut() {
-  if (sb) await sb.auth.signOut();
+function doSignOut() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
   state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
-  loadedUserId = null; currentUser = null;
+  currentUser = null;
   resetForm();
   showAuth();
 }
@@ -709,10 +720,11 @@ function showApp() {
 
 function refreshTopbar() {
   if (!currentUser) return;
-  const fn = currentUser.firstName, ln = currentUser.lastName;
-  const initials = ((fn[0] || '') + (ln[0] || '')).toUpperCase() || (currentUser.email[0] || '?').toUpperCase();
-  document.getElementById('avatar').textContent = initials;
-  document.getElementById('userName').textContent = (fn + ' ' + ln).trim() || currentUser.email;
+  const name = (currentUser.fullName || '').trim();
+  const parts = name.split(/\s+/).filter(Boolean);
+  const initials = (((parts[0] || '')[0] || '') + ((parts[1] || '')[0] || '')) || (currentUser.login[0] || '?');
+  document.getElementById('avatar').textContent = initials.toUpperCase();
+  document.getElementById('userName').textContent = name || currentUser.login;
   document.getElementById('signOutBtn').hidden = false;
   document.getElementById('adminBtn').hidden = (currentUser.role !== 'admin');
 }
@@ -733,10 +745,10 @@ let adminChart = null;
 
 async function openAdmin() {
   if (!currentUser || currentUser.role !== 'admin') return;
-  const { data: rows, error } = await sb.from('profiles')
-    .select('id,first_name,last_name,email,role,data,updated_at')
-    .order('updated_at', { ascending: false });
-  if (error) { toast('Could not load students: ' + error.message); return; }
+  toast('Loading students…');
+  let rows;
+  try { rows = await rpc('app_admin_list', { p_admin_id: currentUser.id, p_admin_pin: currentUser.pin }); }
+  catch (e) { toast('Could not load students: ' + e.message); return; }
   renderAdminList(rows || []);
   document.querySelector('.container > .page-head').style.display = 'none';
   document.querySelector('.layout').style.display = 'none';
@@ -765,7 +777,7 @@ function lastOverall(atts) {
 }
 
 function renderAdminList(rows) {
-  const students = rows.filter(r => r.role !== 'admin');
+  const students = rows.filter(r => !r.is_admin);
   document.getElementById('adminCount').textContent = students.length + (students.length === 1 ? ' student' : ' students');
   const body = document.getElementById('adminBody');
   document.getElementById('adminEmpty').hidden = students.length > 0;
@@ -778,8 +790,8 @@ function renderAdminList(rows) {
     const tr = document.createElement('tr');
     tr.className = 'admin-row';
     tr.innerHTML = `
-      <td>${escapeHtml(((r.first_name || '') + ' ' + (r.last_name || '')).trim()) || '—'}</td>
-      <td class="muted">${escapeHtml(r.email || '')}</td>
+      <td>${escapeHtml((r.full_name || '').trim()) || '—'}</td>
+      <td class="muted">${escapeHtml(r.login || '')}</td>
       <td>${fmtBand(lastBandOf(atts, 'listening'))}</td>
       <td>${fmtBand(lastBandOf(atts, 'reading'))}</td>
       <td>${fmtBand(lastBandOf(atts, 'writing'))}</td>
@@ -797,7 +809,7 @@ function openStudentDetail(r) {
   const data = normalizeState(r.data);
   const atts = attemptsAsc(data.attempts);
   document.getElementById('adminDetailName').textContent =
-    ((r.first_name || '') + ' ' + (r.last_name || '')).trim() || r.email;
+    (r.full_name || '').trim() || r.login;
 
   const cards = SKILLS.map(s =>
     `<div class="admin-band-card"><div class="lbl">${s.name}</div><div class="val">${fmtBand(lastBandOf(atts, s.key))}</div></div>`).join('')
