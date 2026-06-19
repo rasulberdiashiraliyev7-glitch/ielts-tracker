@@ -590,19 +590,30 @@ function setupAuthUI() {
     try {
       if (mode === 'signup') {
         if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
-        const { data, error } = await sb.auth.signUp({
+        const { data, error } = await withTimeout(sb.auth.signUp({
           email, password: pass, options: { data: { first_name: first, last_name: last } }
-        });
+        }), 20000);
         if (error) { setAuthMsg(error.message, 'error'); return; }
         if (!data.session) { setAuthMsg('Account created! Confirm your email, then sign in.', 'ok'); setMode('login'); return; }
       } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+        const { error } = await withTimeout(sb.auth.signInWithPassword({ email, password: pass }), 20000);
         if (error) { setAuthMsg(error.message, 'error'); return; }
       }
+    } catch (err) {
+      setAuthMsg(err.message || 'Connection timed out. Please try again.', 'error');
     } finally {
       submit.disabled = false;
     }
   });
+}
+
+/* reject if a promise takes too long, so the UI never hangs forever */
+function withTimeout(promise, ms) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error('Connection timed out. Please check your internet and try again.')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
 }
 
 function setAuthMsg(msg, kind) {
