@@ -32,22 +32,43 @@ const readingBand   = raw => bandFromTable(raw, READING_TABLE);
 const roundHalf = x => Math.round(x * 2) / 2;
 const fmtBand = b => (b == null ? '—' : Number(b).toFixed(1));
 
+const DEFAULT_TARGETS = { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 };
+
 /* ---------- State ---------- */
-let state = {
-  targets: { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 },
-  attempts: [],
-};
+let state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
 let chart = null;
 
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) state = JSON.parse(raw);
-  } catch (e) { /* ignore */ }
-  if (!state.targets) state.targets = { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 };
-  if (!Array.isArray(state.attempts)) state.attempts = [];
+/* ---------- Cloud / auth globals ---------- */
+let sb = null;            // Supabase client
+let currentUser = null;   // { id, firstName, lastName, email, role }
+let loadedUserId = null;
+let cloudTimer = null;
+
+function normalizeState(data) {
+  const s = (data && typeof data === 'object') ? data : {};
+  if (!s.targets) s.targets = { ...DEFAULT_TARGETS };
+  if (!Array.isArray(s.attempts)) s.attempts = [];
+  return s;
 }
-function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+/* save = local cache (per user) + debounced cloud save */
+function save() {
+  if (currentUser) {
+    try { localStorage.setItem(STORAGE_KEY + ':' + currentUser.id, JSON.stringify(state)); } catch (e) {}
+    scheduleCloudSave();
+  }
+}
+function scheduleCloudSave() {
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(cloudSaveNow, 700);
+}
+async function cloudSaveNow() {
+  if (!currentUser || !sb) return;
+  const { error } = await sb.from('profiles')
+    .update({ data: state, updated_at: new Date().toISOString() })
+    .eq('id', currentUser.id);
+  if (error) toast('Cloud save failed — check your connection');
+}
 
 /* ---------- Helpers ---------- */
 function sortedAttempts() {
@@ -476,8 +497,9 @@ function toast(msg) {
    INIT
    ===================================================================== */
 function init() {
-  load();
-  consolidate();
+  // hide app until auth resolves
+  document.querySelector('.container').style.display = 'none';
+  document.getElementById('authOverlay').hidden = false;
 
   // populate writing/speaking selects (allow empty)
   const emptyOpt = '<option value="">—</option>';
@@ -486,11 +508,11 @@ function init() {
   document.getElementById('sBand').innerHTML = emptyOpt + bandOptions(null, 4);
   document.getElementById('dateInput').value = today();
 
-  // events
+  // app events
   document.getElementById('saveBtn').addEventListener('click', saveAttempt);
   document.getElementById('resetBtn').addEventListener('click', () => {
-    if (confirm('Delete ALL saved tests and reset goals?')) {
-      state = { targets: { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 }, attempts: [] };
+    if (confirm('Delete ALL your saved tests and reset goals?')) {
+      state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
       save(); render(); resetForm(); toast('Everything reset');
     }
   });
@@ -498,21 +520,278 @@ function init() {
     el.addEventListener('input', updateLive);
     el.addEventListener('change', updateLive);
   });
-
-  // backup export / import
   document.getElementById('exportBtn').addEventListener('click', exportData);
   document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
   document.getElementById('importFile').addEventListener('change', e => {
     if (e.target.files[0]) importData(e.target.files[0]);
     e.target.value = '';
   });
-
-  // clamp number inputs
   document.querySelectorAll('.l-sec').forEach(i => i.addEventListener('input', () => clamp(i, 0, 10)));
   document.querySelectorAll('.r-pas').forEach(i => i.addEventListener('input', () => clamp(i, 0, 20)));
 
-  render();
-  updateLive();
+  // admin / account nav
+  document.getElementById('adminBtn').addEventListener('click', openAdmin);
+  document.getElementById('adminCloseBtn').addEventListener('click', () => closeAdmin());
+  document.getElementById('signOutBtn').addEventListener('click', doSignOut);
+
+  setupAuthUI();
+  initSupabase();
+}
+
+/* =====================================================================
+   AUTH + CLOUD
+   ===================================================================== */
+function initSupabase() {
+  if (!window.SUPABASE_URL || !window.SUPABASE_KEY || !window.supabase) {
+    showAuth();
+    setAuthMsg('Cloud is not configured yet.', 'error');
+    return;
+  }
+  sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
+  sb.auth.onAuthStateChange((event, session) => {
+    if (session && session.user) onSignedIn(session);
+    else { loadedUserId = null; currentUser = null; showAuth(); }
+  });
+}
+
+function setupAuthUI() {
+  let mode = 'login';
+  const tabs = document.querySelectorAll('.auth-tab');
+  const signupOnly = document.querySelector('.signup-only');
+  const submit = document.getElementById('authSubmit');
+  const passInput = document.getElementById('auPass');
+
+  function setMode(m) {
+    mode = m;
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === m));
+    signupOnly.hidden = (m !== 'signup');
+    document.getElementById('auFirst').required = (m === 'signup');
+    document.getElementById('auLast').required = (m === 'signup');
+    submit.textContent = (m === 'signup') ? 'Create account' : 'Sign in';
+    passInput.autocomplete = (m === 'signup') ? 'new-password' : 'current-password';
+    setAuthMsg('', '');
+  }
+  tabs.forEach(t => t.addEventListener('click', () => setMode(t.dataset.tab)));
+
+  document.getElementById('authForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!sb) return;
+    const email = document.getElementById('auEmail').value.trim();
+    const pass = document.getElementById('auPass').value;
+    const first = document.getElementById('auFirst').value.trim();
+    const last = document.getElementById('auLast').value.trim();
+    submit.disabled = true;
+    setAuthMsg('Please wait…', '');
+    try {
+      if (mode === 'signup') {
+        if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
+        const { data, error } = await sb.auth.signUp({
+          email, password: pass, options: { data: { first_name: first, last_name: last } }
+        });
+        if (error) { setAuthMsg(error.message, 'error'); return; }
+        if (!data.session) { setAuthMsg('Account created! Confirm your email, then sign in.', 'ok'); setMode('login'); return; }
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if (error) { setAuthMsg(error.message, 'error'); return; }
+      }
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
+function setAuthMsg(msg, kind) {
+  const el = document.getElementById('authMsg');
+  el.textContent = msg;
+  el.className = 'auth-msg' + (kind ? ' ' + kind : '');
+}
+
+async function fetchProfile(uid) {
+  const { data, error } = await sb.from('profiles')
+    .select('first_name,last_name,email,role,data').eq('id', uid).maybeSingle();
+  if (error) { console.warn('profile load:', error.message); return null; }
+  return data;
+}
+
+async function onSignedIn(session) {
+  const uid = session.user.id;
+  if (loadedUserId === uid) return;
+  loadedUserId = uid;
+
+  let prof = await fetchProfile(uid);
+  if (!prof) {
+    const meta = session.user.user_metadata || {};
+    await sb.from('profiles').insert({
+      id: uid, email: session.user.email,
+      first_name: meta.first_name || '', last_name: meta.last_name || ''
+    });
+    prof = await fetchProfile(uid);
+  }
+  if (!prof) { setAuthMsg('Could not load your profile. Try again.', 'error'); loadedUserId = null; return; }
+
+  currentUser = {
+    id: uid, role: prof.role || 'student',
+    firstName: prof.first_name || '', lastName: prof.last_name || '',
+    email: prof.email || session.user.email
+  };
+  state = normalizeState(prof.data);
+  consolidate();
+  showApp();
+  render(); updateLive();
+}
+
+async function doSignOut() {
+  if (sb) await sb.auth.signOut();
+  state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
+  loadedUserId = null; currentUser = null;
+  resetForm();
+  showAuth();
+}
+
+function showApp() {
+  document.getElementById('authOverlay').hidden = true;
+  document.querySelector('.container').style.display = '';
+  closeAdmin(true);
+  const fn = currentUser.firstName, ln = currentUser.lastName;
+  const initials = ((fn[0] || '') + (ln[0] || '')).toUpperCase() || (currentUser.email[0] || '?').toUpperCase();
+  document.getElementById('avatar').textContent = initials;
+  document.getElementById('userName').textContent = (fn + ' ' + ln).trim() || currentUser.email;
+  document.getElementById('signOutBtn').hidden = false;
+  document.getElementById('adminBtn').hidden = (currentUser.role !== 'admin');
+}
+
+function showAuth() {
+  document.getElementById('authOverlay').hidden = false;
+  document.querySelector('.container').style.display = 'none';
+  document.getElementById('signOutBtn').hidden = true;
+  document.getElementById('adminBtn').hidden = true;
+  document.getElementById('userName').textContent = '';
+  document.getElementById('avatar').textContent = '?';
+}
+
+/* =====================================================================
+   ADMIN VIEW
+   ===================================================================== */
+let adminChart = null;
+
+async function openAdmin() {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const { data: rows, error } = await sb.from('profiles')
+    .select('id,first_name,last_name,email,role,data,updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) { toast('Could not load students: ' + error.message); return; }
+  renderAdminList(rows || []);
+  document.querySelector('.container > .page-head').style.display = 'none';
+  document.querySelector('.layout').style.display = 'none';
+  document.getElementById('adminPanel').hidden = false;
+  document.getElementById('adminDetailCard').hidden = true;
+  window.scrollTo(0, 0);
+}
+
+function closeAdmin(silent) {
+  document.getElementById('adminPanel').hidden = true;
+  const ph = document.querySelector('.container > .page-head');
+  const ly = document.querySelector('.layout');
+  if (ph) ph.style.display = '';
+  if (ly) ly.style.display = '';
+  if (!silent) window.scrollTo(0, 0);
+}
+
+function attemptsAsc(atts) { return [...atts].sort((a, b) => (a.date || '').localeCompare(b.date || '')); }
+function lastBandOf(atts, key) {
+  const l = attemptsAsc(atts).filter(a => a[key] && a[key].band != null);
+  return l.length ? l[l.length - 1][key].band : null;
+}
+function lastOverall(atts) {
+  const l = attemptsAsc(atts).map(overallOf).filter(v => v != null);
+  return l.length ? l[l.length - 1] : null;
+}
+
+function renderAdminList(rows) {
+  const students = rows.filter(r => r.role !== 'admin');
+  document.getElementById('adminCount').textContent = students.length + (students.length === 1 ? ' student' : ' students');
+  const body = document.getElementById('adminBody');
+  document.getElementById('adminEmpty').hidden = students.length > 0;
+  body.innerHTML = '';
+  students.forEach(r => {
+    const data = normalizeState(r.data);
+    const atts = data.attempts;
+    const t = data.targets;
+    const tgt = roundHalf((t.listening + t.reading + t.writing + t.speaking) / 4);
+    const tr = document.createElement('tr');
+    tr.className = 'admin-row';
+    tr.innerHTML = `
+      <td>${escapeHtml(((r.first_name || '') + ' ' + (r.last_name || '')).trim()) || '—'}</td>
+      <td class="muted">${escapeHtml(r.email || '')}</td>
+      <td>${fmtBand(lastBandOf(atts, 'listening'))}</td>
+      <td>${fmtBand(lastBandOf(atts, 'reading'))}</td>
+      <td>${fmtBand(lastBandOf(atts, 'writing'))}</td>
+      <td>${fmtBand(lastBandOf(atts, 'speaking'))}</td>
+      <td class="band-overall">${fmtBand(lastOverall(atts))}</td>
+      <td>${fmtBand(tgt)}</td>
+      <td>${atts.length}</td>
+      <td class="muted">${r.updated_at ? formatDate(r.updated_at.slice(0, 10)) : '—'}</td>`;
+    tr.addEventListener('click', () => openStudentDetail(r));
+    body.appendChild(tr);
+  });
+}
+
+function openStudentDetail(r) {
+  const data = normalizeState(r.data);
+  const atts = attemptsAsc(data.attempts);
+  document.getElementById('adminDetailName').textContent =
+    ((r.first_name || '') + ' ' + (r.last_name || '')).trim() || r.email;
+
+  const cards = SKILLS.map(s =>
+    `<div class="admin-band-card"><div class="lbl">${s.name}</div><div class="val">${fmtBand(lastBandOf(atts, s.key))}</div></div>`).join('')
+    + `<div class="admin-band-card overall"><div class="lbl">Overall</div><div class="val">${fmtBand(lastOverall(atts))}</div></div>`;
+  document.getElementById('adminDetailBands').innerHTML = cards;
+
+  const hist = document.getElementById('adminDetailHistory');
+  hist.innerHTML = '';
+  [...atts].reverse().forEach(a => {
+    const c = key => a[key] && a[key].band != null ? fmtBand(a[key].band) : '<span class="muted">—</span>';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${formatDate(a.date)}</td><td class="muted">${escapeHtml(a.label || '—')}</td>` +
+      `<td>${c('listening')}</td><td>${c('reading')}</td><td>${c('writing')}</td><td>${c('speaking')}</td>` +
+      `<td class="band-overall">${fmtBand(overallOf(a))}</td>`;
+    hist.appendChild(tr);
+  });
+
+  drawAdminChart(atts);
+  document.getElementById('adminDetailCard').hidden = false;
+  document.getElementById('adminDetailCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function drawAdminChart(atts) {
+  const labels = atts.map(a => a.label ? a.label : formatDate(a.date));
+  const ds = SKILLS.map(s => ({
+    label: s.name, data: atts.map(a => a[s.key]?.band ?? null),
+    borderColor: s.color, backgroundColor: s.color,
+    tension: .35, spanGaps: true, borderWidth: 2.5, pointRadius: 3,
+  }));
+  ds.push({
+    label: 'Overall', data: atts.map(overallOf),
+    borderColor: '#14293b', backgroundColor: '#14293b',
+    borderWidth: 3, borderDash: [6, 4], tension: .35, spanGaps: true, pointRadius: 3,
+  });
+  const cfg = {
+    type: 'line', data: { labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { font: { family: 'Poppins' }, usePointStyle: true } } },
+      scales: {
+        y: { min: 4, max: 9, ticks: { stepSize: 0.5, font: { family: 'Poppins' } }, grid: { color: '#eef2f3' } },
+        x: { grid: { display: false }, ticks: { font: { family: 'Poppins' } } },
+      },
+    },
+  };
+  if (adminChart) { adminChart.data = cfg.data; adminChart.options = cfg.options; adminChart.update(); }
+  else adminChart = new Chart(document.getElementById('adminChart'), cfg);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function clamp(input, lo, hi) {
   if (input.value === '') return;

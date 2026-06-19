@@ -31,10 +31,39 @@
         <a href="#history" class="nav-link">History</a>
       </nav>
       <div class="topbar-actions">
+        <button class="btn btn-ghost" id="adminBtn" hidden>👑 Admin</button>
+        <span class="user-name" id="userName"></span>
         <div class="avatar" id="avatar">R</div>
+        <button class="btn btn-ghost" id="signOutBtn" hidden>Sign out</button>
       </div>
     </div>
   </header>
+
+  <!-- ===== Auth overlay ===== -->
+  <div class="auth-overlay" id="authOverlay" hidden>
+    <div class="auth-card">
+      <div class="auth-logo"><span class="brand-mark">IELTS</span> Progress Tracker</div>
+      <p class="auth-sub">Sign in to track your band scores in the cloud.</p>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login" type="button">Sign in</button>
+        <button class="auth-tab" data-tab="signup" type="button">Create account</button>
+      </div>
+      <form id="authForm" class="auth-form" autocomplete="on">
+        <div class="signup-only" hidden>
+          <label class="field"><span class="field-label">First name</span>
+            <input type="text" id="auFirst" class="input" autocomplete="given-name" /></label>
+          <label class="field"><span class="field-label">Last name</span>
+            <input type="text" id="auLast" class="input" autocomplete="family-name" /></label>
+        </div>
+        <label class="field"><span class="field-label">Email</span>
+          <input type="email" id="auEmail" class="input" autocomplete="email" required /></label>
+        <label class="field"><span class="field-label">Password</span>
+          <input type="password" id="auPass" class="input" autocomplete="current-password" required minlength="6" /></label>
+        <p class="auth-msg" id="authMsg"></p>
+        <button type="submit" class="btn btn-primary auth-submit" id="authSubmit">Sign in</button>
+      </form>
+    </div>
+  </div>
 
   <main class="container" id="dashboard">
     <!-- ===== Page head ===== -->
@@ -254,8 +283,51 @@
       </div>
     </div>
 
+    <!-- ===================== ADMIN PANEL ===================== -->
+    <section class="admin-panel" id="adminPanel" hidden>
+      <div class="page-head">
+        <div>
+          <h1>👑 Admin Dashboard <span class="pill pill-active" id="adminCount">0 students</span></h1>
+          <p class="subtitle">Every student's IELTS progress at a glance.</p>
+        </div>
+        <button class="btn btn-ghost" id="adminCloseBtn">← Back to my dashboard</button>
+      </div>
+
+      <section class="card">
+        <div class="card-head"><h2>Students</h2><span class="card-icon">👥</span></div>
+        <div class="table-wrap">
+          <table class="history-table admin-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Email</th>
+                <th>L</th><th>R</th><th>W</th><th>S</th>
+                <th>Overall</th><th>Target</th><th>Tests</th><th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="adminBody"></tbody>
+          </table>
+        </div>
+        <p class="empty-note" id="adminEmpty" hidden>No students have signed up yet.</p>
+      </section>
+
+      <section class="card" id="adminDetailCard" hidden>
+        <div class="card-head">
+          <h2 id="adminDetailName">Student detail</h2>
+          <span class="card-icon">📊</span>
+        </div>
+        <div class="admin-detail-bands" id="adminDetailBands"></div>
+        <div class="chart-box" style="margin-top:18px;"><canvas id="adminChart"></canvas></div>
+        <div class="table-wrap" style="margin-top:18px;">
+          <table class="history-table">
+            <thead><tr><th>Date</th><th>Label</th><th>L</th><th>R</th><th>W</th><th>S</th><th>Overall</th></tr></thead>
+            <tbody id="adminDetailHistory"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
     <footer class="footer">
-      Built for tracking IELTS Academic progress · Data stays in your browser.
+      Built for tracking IELTS Academic progress · Your data is saved securely in the cloud.
     </footer>
   </main>
 
@@ -263,6 +335,8 @@
   <div class="toast" id="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
