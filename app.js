@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '5';
+const BUILD = '6';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -552,7 +552,16 @@ function initSupabase() {
     setAuthMsg('Cloud is not configured yet.', 'error');
     return;
   }
-  sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
+  sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+      // Bypass the navigator.locks lock, which can deadlock and leave
+      // sign-in/sign-up stuck on "Please wait..." forever.
+      lock: async (_name, _acquireTimeout, fn) => fn(),
+    },
+  });
   sb.auth.onAuthStateChange((event, session) => {
     // Defer any Supabase calls out of this callback — calling the DB
     // directly here can deadlock GoTrue's internal auth lock.
