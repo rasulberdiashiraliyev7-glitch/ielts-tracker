@@ -64,10 +64,12 @@ function scheduleCloudSave() {
 }
 async function cloudSaveNow() {
   if (!currentUser || !sb) return;
-  const { error } = await sb.from('profiles')
-    .update({ data: state, updated_at: new Date().toISOString() })
-    .eq('id', currentUser.id);
-  if (error) toast('Cloud save failed — check your connection');
+  try {
+    const { error } = await withTimeout(sb.from('profiles')
+      .update({ data: state, updated_at: new Date().toISOString() })
+      .eq('id', currentUser.id), 15000);
+    if (error) console.warn('cloud save:', error.message);
+  } catch (e) { /* keep local copy; will retry on next change */ }
 }
 
 /* ---------- Helpers ---------- */
@@ -622,6 +624,12 @@ function setAuthMsg(msg, kind) {
   el.className = 'auth-msg' + (kind ? ' ' + kind : '');
 }
 
+function cacheKey(uid) { return STORAGE_KEY + ':' + uid; }
+function loadCache(uid) {
+  try { const raw = localStorage.getItem(cacheKey(uid)); if (raw) return JSON.parse(raw); } catch (e) {}
+  return null;
+}
+
 async function fetchProfile(uid) {
   const { data, error } = await sb.from('profiles')
     .select('first_name,last_name,email,role,data').eq('id', uid).maybeSingle();
@@ -633,27 +641,43 @@ async function onSignedIn(session) {
   const uid = session.user.id;
   if (loadedUserId === uid) return;
   loadedUserId = uid;
+  const meta = session.user.user_metadata || {};
 
-  let prof = await fetchProfile(uid);
-  if (!prof) {
-    const meta = session.user.user_metadata || {};
-    await sb.from('profiles').insert({
-      id: uid, email: session.user.email,
-      first_name: meta.first_name || '', last_name: meta.last_name || ''
-    });
-    prof = await fetchProfile(uid);
-  }
-  if (!prof) { setAuthMsg('Could not load your profile. Try again.', 'error'); loadedUserId = null; return; }
-
+  // 1) Show the app IMMEDIATELY from cache — never block the UI on the network
   currentUser = {
-    id: uid, role: prof.role || 'student',
-    firstName: prof.first_name || '', lastName: prof.last_name || '',
-    email: prof.email || session.user.email
+    id: uid, role: 'student',
+    firstName: meta.first_name || '', lastName: meta.last_name || '',
+    email: session.user.email,
   };
-  state = normalizeState(prof.data);
-  consolidate();
+  state = normalizeState(loadCache(uid));
   showApp();
   render(); updateLive();
+
+  // 2) Sync the real profile from the cloud in the background (time-boxed)
+  try {
+    let prof = await withTimeout(fetchProfile(uid), 12000);
+    if (!prof) {
+      await withTimeout(sb.from('profiles').insert({
+        id: uid, email: session.user.email,
+        first_name: meta.first_name || '', last_name: meta.last_name || '',
+      }), 12000);
+      prof = await withTimeout(fetchProfile(uid), 12000);
+    }
+    if (prof) {
+      currentUser.role = prof.role || 'student';
+      currentUser.firstName = prof.first_name || currentUser.firstName;
+      currentUser.lastName = prof.last_name || currentUser.lastName;
+      currentUser.email = prof.email || currentUser.email;
+      if (prof.data && (prof.data.attempts || prof.data.targets)) {
+        state = normalizeState(prof.data);
+        consolidate();
+      }
+      refreshTopbar();
+      render(); updateLive();
+    }
+  } catch (e) {
+    toast('Slow connection — your data is saved on this device and will sync later.');
+  }
 }
 
 async function doSignOut() {
@@ -668,6 +692,11 @@ function showApp() {
   document.getElementById('authOverlay').hidden = true;
   document.querySelector('.container').style.display = '';
   closeAdmin(true);
+  refreshTopbar();
+}
+
+function refreshTopbar() {
+  if (!currentUser) return;
   const fn = currentUser.firstName, ln = currentUser.lastName;
   const initials = ((fn[0] || '') + (ln[0] || '')).toUpperCase() || (currentUser.email[0] || '?').toUpperCase();
   document.getElementById('avatar').textContent = initials;
