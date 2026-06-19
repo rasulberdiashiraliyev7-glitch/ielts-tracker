@@ -328,6 +328,7 @@ a { text-decoration: none; color: inherit; }
 .auth-tab.active { background: #fff; color: var(--teal-dark); box-shadow: var(--shadow-sm); }
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
 .signup-only { display: flex; flex-direction: column; gap: 14px; }
+.signup-only[hidden] { display: none; }
 .auth-submit { justify-content: center; padding: 12px; margin-top: 6px; }
 .auth-msg { font-size: 13px; margin: 0; line-height: 1.4; }
 .auth-msg.error { color: #e11d48; }

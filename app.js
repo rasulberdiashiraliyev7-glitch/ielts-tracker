@@ -549,8 +549,13 @@ function initSupabase() {
   }
   sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
   sb.auth.onAuthStateChange((event, session) => {
-    if (session && session.user) onSignedIn(session);
-    else { loadedUserId = null; currentUser = null; showAuth(); }
+    // Defer any Supabase calls out of this callback — calling the DB
+    // directly here can deadlock GoTrue's internal auth lock.
+    if (session && session.user) {
+      setTimeout(() => onSignedIn(session), 0);
+    } else {
+      loadedUserId = null; currentUser = null; showAuth();
+    }
   });
 }
 
