@@ -3,6 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
+const BUILD = '5';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -502,6 +503,8 @@ function init() {
   // hide app until auth resolves
   document.querySelector('.container').style.display = 'none';
   document.getElementById('authOverlay').hidden = false;
+  const bv = document.getElementById('buildVer');
+  if (bv) bv.textContent = 'build ' + BUILD;
 
   // populate writing/speaking selects (allow empty)
   const emptyOpt = '<option value="">—</option>';
@@ -594,11 +597,11 @@ function setupAuthUI() {
         if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
         const { data, error } = await withTimeout(sb.auth.signUp({
           email, password: pass, options: { data: { first_name: first, last_name: last } }
-        }), 20000);
+        }), 15000);
         if (error) { setAuthMsg(error.message, 'error'); return; }
         if (!data.session) { setAuthMsg('Account created! Confirm your email, then sign in.', 'ok'); setMode('login'); return; }
       } else {
-        const { error } = await withTimeout(sb.auth.signInWithPassword({ email, password: pass }), 20000);
+        const { error } = await withTimeout(sb.auth.signInWithPassword({ email, password: pass }), 15000);
         if (error) { setAuthMsg(error.message, 'error'); return; }
       }
     } catch (err) {

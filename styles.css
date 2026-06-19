@@ -333,6 +333,7 @@ a { text-decoration: none; color: inherit; }
 .auth-msg { font-size: 13px; margin: 0; line-height: 1.4; }
 .auth-msg.error { color: #e11d48; }
 .auth-msg.ok { color: var(--teal-dark); }
+.auth-ver { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 16px; letter-spacing: .03em; }
 
 /* ============ Admin ============ */
 .admin-table th, .admin-table td { white-space: nowrap; }
