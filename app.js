@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '10';
+const BUILD = '11';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -55,10 +55,10 @@ function normalizeState(data) {
 async function fetchRetry(url, opts, attempt) {
   attempt = attempt || 1;
   try {
-    return await withTimeout(fetch(url, opts), 12000);
+    return await withTimeout(fetch(url, opts), 9000);
   } catch (e) {
     const transient = /failed to fetch|networkerror|load failed|timed out/i.test(e.message || '');
-    if (transient && attempt < 3) {
+    if (transient && attempt < 2) {
       await new Promise(r => setTimeout(r, 600 * attempt));
       return fetchRetry(url, opts, attempt + 1);
     }
@@ -639,6 +639,28 @@ function init() {
 
   setupAuthUI();
   initCloud();
+  runDiag();
+}
+
+/* On-screen connectivity self-test: can THIS browser reach Firebase? */
+async function runDiag() {
+  const el = document.getElementById('authDiag');
+  if (!el || !window.FIREBASE_API_KEY) return;
+  el.textContent = 'Checking server…';
+  el.className = 'auth-diag';
+  const t0 = Date.now();
+  try {
+    // any HTTP response (even 400) proves the server is reachable from here
+    await withTimeout(fetch(authUrl('signInWithPassword'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'diag@diag.test', password: 'x', returnSecureToken: true }),
+    }), 9000);
+    el.textContent = 'Server reachable ✓ (' + (Date.now() - t0) + 'ms)';
+    el.className = 'auth-diag ok';
+  } catch (e) {
+    el.textContent = 'Cannot reach server ✗ (' + (Date.now() - t0) + 'ms): ' + (e.message || 'network').slice(0, 36);
+    el.className = 'auth-diag bad';
+  }
 }
 
 /* =====================================================================

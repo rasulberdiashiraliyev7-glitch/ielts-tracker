@@ -334,6 +334,9 @@ a { text-decoration: none; color: inherit; }
 .auth-msg.error { color: #e11d48; }
 .auth-msg.ok { color: var(--teal-dark); }
 .auth-ver { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 16px; letter-spacing: .03em; }
+.auth-diag { text-align: center; font-size: 12px; margin-top: 6px; min-height: 16px; }
+.auth-diag.ok { color: var(--teal-dark); }
+.auth-diag.bad { color: #e11d48; font-weight: 500; }
 
 /* ============ Admin ============ */
 .admin-table th, .admin-table td { white-space: nowrap; }
