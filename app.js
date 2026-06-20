@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '11';
+const BUILD = '12';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -642,25 +642,23 @@ function init() {
   runDiag();
 }
 
-/* On-screen connectivity self-test: can THIS browser reach Firebase? */
+/* On-screen connectivity self-test: can THIS browser reach BOTH Firebase
+   services — Auth (identitytoolkit) and Data (firestore)? */
 async function runDiag() {
   const el = document.getElementById('authDiag');
   if (!el || !window.FIREBASE_API_KEY) return;
   el.textContent = 'Checking server…';
   el.className = 'auth-diag';
-  const t0 = Date.now();
-  try {
-    // any HTTP response (even 400) proves the server is reachable from here
-    await withTimeout(fetch(authUrl('signInWithPassword'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'diag@diag.test', password: 'x', returnSecureToken: true }),
-    }), 9000);
-    el.textContent = 'Server reachable ✓ (' + (Date.now() - t0) + 'ms)';
-    el.className = 'auth-diag ok';
-  } catch (e) {
-    el.textContent = 'Cannot reach server ✗ (' + (Date.now() - t0) + 'ms): ' + (e.message || 'network').slice(0, 36);
-    el.className = 'auth-diag bad';
+  async function test(label, url, opts) {
+    const t0 = Date.now();
+    try { await withTimeout(fetch(url, opts), 8000); return label + ' ✓ ' + (Date.now() - t0) + 'ms'; }
+    catch (e) { return label + ' ✗ ' + (/timed out/i.test(e.message || '') ? 'timeout' : 'blocked'); }
   }
+  const auth = await test('Auth', authUrl('signInWithPassword'),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'd@d.test', password: 'x', returnSecureToken: true }) });
+  const data = await test('Data', fsBase() + '/users/__diag__', {});
+  el.textContent = auth + '  ·  ' + data;
+  el.className = 'auth-diag ' + (/✗/.test(auth + data) ? 'bad' : 'ok');
 }
 
 /* =====================================================================
@@ -707,21 +705,16 @@ function setupAuthUI() {
     submit.disabled = true;
     setAuthMsg('Please wait…', '');
     try {
-      let prof;
-      if (mode === 'signup') {
+      const isSignup = (mode === 'signup');
+      let auth;
+      if (isSignup) {
         if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
-        let auth;
         try { auth = await fbSignUp(email, pass); }
         catch (err) {
           if (/EMAIL_EXISTS/.test(err.code || err.message)) { setAuthMsg('This email is already registered — use Sign in.', 'error'); setMode('login'); return; }
           throw err;
         }
-        setSession(auth);
-        const fullName = (first + ' ' + last).trim();
-        await fsSetUser(auth.localId, { full_name: fullName, email: email, is_admin: false, data: normalizeState(null), updated_at: new Date().toISOString() });
-        prof = { uid: auth.localId, full_name: fullName, email: email, is_admin: false, data: normalizeState(null) };
       } else {
-        let auth;
         try { auth = await fbSignIn(email, pass); }
         catch (err) {
           if (/INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND|INVALID_PASSWORD|MISSING_PASSWORD/.test(err.code || err.message)) {
@@ -729,24 +722,46 @@ function setupAuthUI() {
           }
           throw err;
         }
-        setSession(auth);
-        prof = await fsGetUser(auth.localId);
-        if (!prof) {
-          const guess = email.split('@')[0];
-          await fsSetUser(auth.localId, { full_name: guess, email: email, is_admin: false, data: normalizeState(null), updated_at: new Date().toISOString() });
-          prof = { uid: auth.localId, full_name: guess, email: email, is_admin: false, data: normalizeState(null) };
-        }
       }
-      applyProfile(prof);
+      // Auth succeeded — get INTO the app immediately; sync Firestore in the
+      // background so a slow/blocked data server never freezes the login.
+      setSession(auth);
+      currentUser.email = email;
+      currentUser.fullName = isSignup ? (first + ' ' + last).trim() : (currentUser.fullName || email.split('@')[0]);
+      currentUser.role = currentUser.role || 'student';
+      state = normalizeState(loadCache(currentUser.uid));
+      saveSession();
       showApp();
       render(); updateLive();
       setAuthMsg('', '');
+      syncProfile(isSignup);
     } catch (err) {
       setAuthMsg(friendlyAuthError(err), 'error');
     } finally {
       submit.disabled = false;
     }
   });
+}
+
+// Create/load the Firestore profile after the app is already showing.
+async function syncProfile(isSignup) {
+  try {
+    if (isSignup) {
+      await fsSetUser(currentUser.uid, {
+        full_name: currentUser.fullName, email: currentUser.email,
+        is_admin: false, data: state, updated_at: new Date().toISOString(),
+      });
+    } else {
+      const prof = await fsGetUser(currentUser.uid);
+      if (prof) applyProfile(prof);
+      else await fsSetUser(currentUser.uid, {
+        full_name: currentUser.fullName, email: currentUser.email,
+        is_admin: false, data: state, updated_at: new Date().toISOString(),
+      });
+    }
+  } catch (e) {
+    toast('Cloud sync is slow — your data is saved on this device.');
+  }
 }
 
 function friendlyAuthError(err) {
