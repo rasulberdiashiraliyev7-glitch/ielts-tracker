@@ -1,4 +1,5 @@
-/* Supabase connection — the publishable (anon) key is safe to expose;
-   the database is protected by Row Level Security policies. */
-window.SUPABASE_URL = 'https://mgqnfmstgbvgogozncqq.supabase.co';
-window.SUPABASE_KEY = 'sb_publishable_PMfhmIbGBMzRYCCUeoGY6A_ZF9LvVc_';
+/* Firebase connection (Google infrastructure).
+   The Web API key is safe to expose — Firestore security rules protect data. */
+window.FIREBASE_API_KEY = 'AIzaSyD0piCERLH8h-4QuEp72RJMwmHK45_cP7I';
+window.FIREBASE_PROJECT_ID = 'ielts-tracker-d2d58';
+window.FIREBASE_DB_ID = 'default';

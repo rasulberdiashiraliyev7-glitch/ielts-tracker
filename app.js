@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '8';
+const BUILD = '10';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -39,10 +39,10 @@ const DEFAULT_TARGETS = { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 
 let state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
 let chart = null;
 
-/* ---------- Cloud / auth globals ---------- */
-let currentUser = null;   // { id, fullName, login, role, pin }
+/* ---------- Cloud / auth globals (Firebase REST — Google infra) ---------- */
+let currentUser = null;   // { uid, fullName, email, role, idToken, refreshToken, expiresAt }
 let cloudTimer = null;
-const SESSION_KEY = 'ielts_session_v1';
+const SESSION_KEY = 'ielts_session_v2';
 
 function normalizeState(data) {
   const s = (data && typeof data === 'object') ? data : {};
@@ -51,45 +51,112 @@ function normalizeState(data) {
   return s;
 }
 
-/* Direct REST call to a Postgres function — plain fetch, no supabase-js,
-   so there is no auth lock that can deadlock and freeze the UI.
-   Retries automatically on transient network drops (flaky connections). */
-async function rpcFetch(fn, args, attempt) {
+/* fetch with timeout + auto-retry on transient network drops */
+async function fetchRetry(url, opts, attempt) {
   attempt = attempt || 1;
   try {
-    return await withTimeout(fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-      method: 'POST',
-      headers: {
-        apikey: window.SUPABASE_KEY,
-        Authorization: 'Bearer ' + window.SUPABASE_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(args),
-    }), 12000);
+    return await withTimeout(fetch(url, opts), 12000);
   } catch (e) {
     const transient = /failed to fetch|networkerror|load failed|timed out/i.test(e.message || '');
     if (transient && attempt < 3) {
       await new Promise(r => setTimeout(r, 600 * attempt));
-      return rpcFetch(fn, args, attempt + 1);
+      return fetchRetry(url, opts, attempt + 1);
     }
     throw e;
   }
 }
-async function rpc(fn, args) {
-  const res = await rpcFetch(fn, args);
-  const text = await res.text();
+async function jsonPost(url, body) {
+  const res = await fetchRetry(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    let msg = text;
-    try { msg = JSON.parse(text).message || msg; } catch (e) {}
-    const err = new Error(msg); err.status = res.status; throw err;
+    const err = new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+    err.code = (data.error && data.error.message) || ''; throw err;
   }
-  return text ? JSON.parse(text) : null;
+  return data;
+}
+
+/* ---- Firebase Authentication (Identity Toolkit) REST ---- */
+function fbKey() { return window.FIREBASE_API_KEY; }
+function authUrl(method) { return 'https://identitytoolkit.googleapis.com/v1/accounts:' + method + '?key=' + fbKey(); }
+async function fbSignUp(email, password) { return jsonPost(authUrl('signUp'), { email, password, returnSecureToken: true }); }
+async function fbSignIn(email, password) { return jsonPost(authUrl('signInWithPassword'), { email, password, returnSecureToken: true }); }
+async function fbRefresh(refreshToken) {
+  const d = await jsonPost('https://securetoken.googleapis.com/v1/token?key=' + fbKey(),
+    { grant_type: 'refresh_token', refresh_token: refreshToken });
+  return { idToken: d.id_token, refreshToken: d.refresh_token, uid: d.user_id, expiresIn: +d.expires_in };
+}
+async function ensureToken() {
+  if (!currentUser) throw new Error('Not signed in');
+  if (Date.now() < currentUser.expiresAt - 60000) return currentUser.idToken;
+  const r = await fbRefresh(currentUser.refreshToken);
+  currentUser.idToken = r.idToken;
+  currentUser.refreshToken = r.refreshToken || currentUser.refreshToken;
+  currentUser.expiresAt = Date.now() + r.expiresIn * 1000;
+  saveSession();
+  return currentUser.idToken;
+}
+
+/* ---- Firestore REST (store the whole state as a JSON string field) ---- */
+function fsBase() {
+  return 'https://firestore.googleapis.com/v1/projects/' + window.FIREBASE_PROJECT_ID +
+         '/databases/' + (window.FIREBASE_DB_ID || '(default)') + '/documents';
+}
+function encodeFields(o) {
+  const f = {};
+  if (o.full_name != null) f.full_name = { stringValue: o.full_name };
+  if (o.email != null) f.email = { stringValue: o.email };
+  if (o.is_admin != null) f.is_admin = { booleanValue: !!o.is_admin };
+  if (o.data != null) f.data = { stringValue: JSON.stringify(o.data) };
+  if (o.updated_at != null) f.updated_at = { stringValue: o.updated_at };
+  return f;
+}
+function decodeDoc(doc) {
+  const f = doc.fields || {};
+  let data = {};
+  try { data = JSON.parse((f.data && f.data.stringValue) || '{}'); } catch (e) {}
+  return {
+    uid: doc.name.split('/').pop(),
+    full_name: (f.full_name && f.full_name.stringValue) || '',
+    email: (f.email && f.email.stringValue) || '',
+    is_admin: !!(f.is_admin && f.is_admin.booleanValue),
+    data: normalizeState(data),
+    updated_at: (f.updated_at && f.updated_at.stringValue) || '',
+  };
+}
+async function fsGetUser(uid) {
+  const token = await ensureToken();
+  const res = await fetchRetry(fsBase() + '/users/' + uid, { headers: { Authorization: 'Bearer ' + token } });
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  return decodeDoc(data);
+}
+async function fsSetUser(uid, fields, mask) {
+  const token = await ensureToken();
+  let url = fsBase() + '/users/' + uid;
+  if (mask && mask.length) url += '?' + mask.map(m => 'updateMask.fieldPaths=' + m).join('&');
+  const res = await fetchRetry(url, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: encodeFields(fields) }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error && d.error.message) || ('HTTP ' + res.status)); }
+  return res.json().catch(() => ({}));
+}
+async function fsListUsers() {
+  const token = await ensureToken();
+  const res = await fetchRetry(fsBase() + '/users?pageSize=500', { headers: { Authorization: 'Bearer ' + token } });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  return (data.documents || []).map(decodeDoc);
 }
 
 /* save = local cache (per user) + debounced cloud save */
 function save() {
   if (currentUser) {
-    try { localStorage.setItem(STORAGE_KEY + ':' + currentUser.id, JSON.stringify(state)); } catch (e) {}
+    try { localStorage.setItem(STORAGE_KEY + ':' + currentUser.uid, JSON.stringify(state)); } catch (e) {}
     scheduleCloudSave();
   }
 }
@@ -99,7 +166,7 @@ function scheduleCloudSave() {
 }
 async function cloudSaveNow() {
   if (!currentUser) return;
-  try { await rpc('app_save', { p_id: currentUser.id, p_pin: currentUser.pin, p_data: state }); }
+  try { await fsSetUser(currentUser.uid, { data: state, updated_at: new Date().toISOString() }, ['data', 'updated_at']); }
   catch (e) { /* keep local copy; retries on next change */ }
 }
 
@@ -578,14 +645,14 @@ function init() {
    AUTH + CLOUD
    ===================================================================== */
 function initCloud() {
-  if (!window.SUPABASE_URL || !window.SUPABASE_KEY) {
+  if (!window.FIREBASE_API_KEY || !window.FIREBASE_PROJECT_ID) {
     showAuth();
     setAuthMsg('Cloud is not configured yet.', 'error');
     return;
   }
   let s = null;
   try { s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) {}
-  if (s && s.id && s.pin) resumeSession(s);
+  if (s && s.uid && s.refreshToken) resumeSession(s);
   else showAuth();
 }
 
@@ -621,39 +688,53 @@ function setupAuthUI() {
       let prof;
       if (mode === 'signup') {
         if (!first || !last) { setAuthMsg('Please enter your first and last name.', 'error'); return; }
-        try {
-          await rpc('app_signup', { p_name: (first + ' ' + last).trim(), p_login: email, p_pin: pass });
-        } catch (err) {
-          if (err.status === 409 || /duplicate|already|unique/i.test(err.message)) {
-            setAuthMsg('This email is already registered — use Sign in.', 'error'); setMode('login'); return;
+        let auth;
+        try { auth = await fbSignUp(email, pass); }
+        catch (err) {
+          if (/EMAIL_EXISTS/.test(err.code || err.message)) { setAuthMsg('This email is already registered — use Sign in.', 'error'); setMode('login'); return; }
+          throw err;
+        }
+        setSession(auth);
+        const fullName = (first + ' ' + last).trim();
+        await fsSetUser(auth.localId, { full_name: fullName, email: email, is_admin: false, data: normalizeState(null), updated_at: new Date().toISOString() });
+        prof = { uid: auth.localId, full_name: fullName, email: email, is_admin: false, data: normalizeState(null) };
+      } else {
+        let auth;
+        try { auth = await fbSignIn(email, pass); }
+        catch (err) {
+          if (/INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND|INVALID_PASSWORD|MISSING_PASSWORD/.test(err.code || err.message)) {
+            setAuthMsg('Wrong email or password.', 'error'); return;
           }
           throw err;
         }
-        const rows = await rpc('app_login', { p_login: email, p_pin: pass });
-        prof = rows && rows[0];
-      } else {
-        const rows = await rpc('app_login', { p_login: email, p_pin: pass });
-        if (!rows || !rows.length) { setAuthMsg('Wrong email or password.', 'error'); return; }
-        prof = rows[0];
+        setSession(auth);
+        prof = await fsGetUser(auth.localId);
+        if (!prof) {
+          const guess = email.split('@')[0];
+          await fsSetUser(auth.localId, { full_name: guess, email: email, is_admin: false, data: normalizeState(null), updated_at: new Date().toISOString() });
+          prof = { uid: auth.localId, full_name: guess, email: email, is_admin: false, data: normalizeState(null) };
+        }
       }
-      if (prof) {
-        currentUser = {
-          id: prof.id, fullName: prof.full_name, login: prof.login,
-          role: prof.is_admin ? 'admin' : 'student', pin: pass,
-        };
-        saveSession();
-        state = normalizeState(prof.data);
-        consolidate();
-        showApp();
-        render(); updateLive();
-        setAuthMsg('', '');
-      }
+      applyProfile(prof);
+      showApp();
+      render(); updateLive();
+      setAuthMsg('', '');
     } catch (err) {
-      setAuthMsg(err.message || 'Connection timed out. Please try again.', 'error');
+      setAuthMsg(friendlyAuthError(err), 'error');
     } finally {
       submit.disabled = false;
     }
   });
+}
+
+function friendlyAuthError(err) {
+  const m = err.code || err.message || '';
+  if (/EMAIL_EXISTS/.test(m)) return 'This email is already registered — use Sign in.';
+  if (/INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND|INVALID_PASSWORD/.test(m)) return 'Wrong email or password.';
+  if (/WEAK_PASSWORD/.test(m)) return 'Password should be at least 6 characters.';
+  if (/INVALID_EMAIL/.test(m)) return 'That email address looks invalid.';
+  if (/timed out|failed to fetch|networkerror|load failed/i.test(m)) return 'Connection problem — please try again.';
+  return m || 'Something went wrong. Please try again.';
 }
 
 /* reject if a promise takes too long, so the UI never hangs forever */
@@ -677,19 +758,29 @@ function loadCache(uid) {
   return null;
 }
 
+function setSession(auth) {
+  currentUser = currentUser || {};
+  currentUser.uid = auth.localId || auth.uid;
+  currentUser.idToken = auth.idToken;
+  currentUser.refreshToken = auth.refreshToken;
+  currentUser.expiresAt = Date.now() + (+auth.expiresIn || 3600) * 1000;
+  saveSession();
+}
+
 function saveSession() {
   if (!currentUser) return;
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      id: currentUser.id, login: currentUser.login, pin: currentUser.pin,
-      fullName: currentUser.fullName, role: currentUser.role,
+      uid: currentUser.uid, refreshToken: currentUser.refreshToken,
+      idToken: currentUser.idToken, expiresAt: currentUser.expiresAt,
+      fullName: currentUser.fullName, email: currentUser.email, role: currentUser.role,
     }));
   } catch (e) {}
 }
 
 function applyProfile(prof) {
-  currentUser.fullName = prof.full_name || currentUser.fullName;
-  currentUser.login = prof.login || currentUser.login;
+  currentUser.fullName = prof.full_name || currentUser.fullName || '';
+  currentUser.email = prof.email || currentUser.email || '';
   currentUser.role = prof.is_admin ? 'admin' : 'student';
   saveSession();
   if (prof.data && (prof.data.attempts || prof.data.targets)) {
@@ -703,18 +794,18 @@ function applyProfile(prof) {
 // Resume a saved login: show app instantly from cache, verify in background
 async function resumeSession(s) {
   currentUser = {
-    id: s.id, fullName: s.fullName || '', login: s.login || '',
-    role: s.role || 'student', pin: s.pin,
+    uid: s.uid, refreshToken: s.refreshToken, idToken: s.idToken, expiresAt: s.expiresAt || 0,
+    fullName: s.fullName || '', email: s.email || '', role: s.role || 'student',
   };
-  state = normalizeState(loadCache(s.id));
+  state = normalizeState(loadCache(s.uid));
   showApp();
   render(); updateLive();
   try {
-    const rows = await rpc('app_login', { p_login: s.login, p_pin: s.pin });
-    if (rows && rows.length) applyProfile(rows[0]);
-    else doSignOut();
+    const prof = await fsGetUser(s.uid);
+    if (prof) applyProfile(prof);
   } catch (e) {
-    toast('Slow connection — showing your saved data.');
+    if (/INVALID_REFRESH_TOKEN|TOKEN_EXPIRED|USER_NOT_FOUND|INVALID_GRANT/i.test(e.message || '')) doSignOut();
+    else toast('Slow connection — showing your saved data.');
   }
 }
 
@@ -737,9 +828,9 @@ function refreshTopbar() {
   if (!currentUser) return;
   const name = (currentUser.fullName || '').trim();
   const parts = name.split(/\s+/).filter(Boolean);
-  const initials = (((parts[0] || '')[0] || '') + ((parts[1] || '')[0] || '')) || (currentUser.login[0] || '?');
+  const initials = (((parts[0] || '')[0] || '') + ((parts[1] || '')[0] || '')) || ((currentUser.email || '?')[0]);
   document.getElementById('avatar').textContent = initials.toUpperCase();
-  document.getElementById('userName').textContent = name || currentUser.login;
+  document.getElementById('userName').textContent = name || currentUser.email;
   document.getElementById('signOutBtn').hidden = false;
   document.getElementById('adminBtn').hidden = (currentUser.role !== 'admin');
 }
@@ -762,8 +853,8 @@ async function openAdmin() {
   if (!currentUser || currentUser.role !== 'admin') return;
   toast('Loading students…');
   let rows;
-  try { rows = await rpc('app_admin_list', { p_admin_id: currentUser.id, p_admin_pin: currentUser.pin }); }
-  catch (e) { toast('Could not load students: ' + e.message); return; }
+  try { rows = await fsListUsers(); }
+  catch (e) { toast('Could not load students: ' + friendlyAuthError(e)); return; }
   renderAdminList(rows || []);
   document.querySelector('.container > .page-head').style.display = 'none';
   document.querySelector('.layout').style.display = 'none';
@@ -806,7 +897,7 @@ function renderAdminList(rows) {
     tr.className = 'admin-row';
     tr.innerHTML = `
       <td>${escapeHtml((r.full_name || '').trim()) || '—'}</td>
-      <td class="muted">${escapeHtml(r.login || '')}</td>
+      <td class="muted">${escapeHtml(r.email || '')}</td>
       <td>${fmtBand(lastBandOf(atts, 'listening'))}</td>
       <td>${fmtBand(lastBandOf(atts, 'reading'))}</td>
       <td>${fmtBand(lastBandOf(atts, 'writing'))}</td>
@@ -824,7 +915,7 @@ function openStudentDetail(r) {
   const data = normalizeState(r.data);
   const atts = attemptsAsc(data.attempts);
   document.getElementById('adminDetailName').textContent =
-    (r.full_name || '').trim() || r.login;
+    (r.full_name || '').trim() || r.email;
 
   const cards = SKILLS.map(s =>
     `<div class="admin-band-card"><div class="lbl">${s.name}</div><div class="val">${fmtBand(lastBandOf(atts, s.key))}</div></div>`).join('')
