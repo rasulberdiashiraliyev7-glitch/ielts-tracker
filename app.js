@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '12';
+const BUILD = '13';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -51,27 +51,36 @@ function normalizeState(data) {
   return s;
 }
 
-/* fetch with timeout + auto-retry on transient network drops */
-async function fetchRetry(url, opts, attempt) {
+/* HTTP request whose timeout covers BOTH the headers AND the body read.
+   (Reading the body separately was un-timed, so a proxy that stalls the
+   response body could freeze the UI on "Please wait..." forever.)
+   Retries once on a transient network drop. */
+async function httpRequest(url, opts, attempt) {
   attempt = attempt || 1;
   try {
-    return await withTimeout(fetch(url, opts), 9000);
+    return await withTimeout((async () => {
+      const res = await fetch(url, opts);
+      const text = await res.text();
+      return { ok: res.ok, status: res.status, text };
+    })(), 10000);
   } catch (e) {
     const transient = /failed to fetch|networkerror|load failed|timed out/i.test(e.message || '');
     if (transient && attempt < 2) {
       await new Promise(r => setTimeout(r, 600 * attempt));
-      return fetchRetry(url, opts, attempt + 1);
+      return httpRequest(url, opts, attempt + 1);
     }
     throw e;
   }
 }
+function parseJson(text) { try { return JSON.parse(text); } catch (e) { return {}; } }
+
 async function jsonPost(url, body) {
-  const res = await fetchRetry(url, {
+  const r = await httpRequest(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  const data = parseJson(r.text);
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || ('HTTP ' + r.status));
     err.code = (data.error && data.error.message) || ''; throw err;
   }
   return data;
@@ -127,29 +136,29 @@ function decodeDoc(doc) {
 }
 async function fsGetUser(uid) {
   const token = await ensureToken();
-  const res = await fetchRetry(fsBase() + '/users/' + uid, { headers: { Authorization: 'Bearer ' + token } });
-  if (res.status === 404) return null;
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  const r = await httpRequest(fsBase() + '/users/' + uid, { headers: { Authorization: 'Bearer ' + token } });
+  if (r.status === 404) return null;
+  const data = parseJson(r.text);
+  if (!r.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + r.status));
   return decodeDoc(data);
 }
 async function fsSetUser(uid, fields, mask) {
   const token = await ensureToken();
   let url = fsBase() + '/users/' + uid;
   if (mask && mask.length) url += '?' + mask.map(m => 'updateMask.fieldPaths=' + m).join('&');
-  const res = await fetchRetry(url, {
+  const r = await httpRequest(url, {
     method: 'PATCH',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: encodeFields(fields) }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error && d.error.message) || ('HTTP ' + res.status)); }
-  return res.json().catch(() => ({}));
+  if (!r.ok) { const d = parseJson(r.text); throw new Error((d.error && d.error.message) || ('HTTP ' + r.status)); }
+  return parseJson(r.text);
 }
 async function fsListUsers() {
   const token = await ensureToken();
-  const res = await fetchRetry(fsBase() + '/users?pageSize=500', { headers: { Authorization: 'Bearer ' + token } });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  const r = await httpRequest(fsBase() + '/users?pageSize=500', { headers: { Authorization: 'Bearer ' + token } });
+  const data = parseJson(r.text);
+  if (!r.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + r.status));
   return (data.documents || []).map(decodeDoc);
 }
 
@@ -604,6 +613,16 @@ function init() {
   const bv = document.getElementById('buildVer');
   if (bv) bv.textContent = 'build ' + BUILD;
 
+  // surface any uncaught error on the auth screen instead of failing silently
+  const showErr = msg => {
+    const el = document.getElementById('authMsg');
+    if (el && !document.getElementById('authOverlay').hidden) {
+      el.textContent = String(msg).slice(0, 70); el.className = 'auth-msg error';
+    }
+  };
+  window.addEventListener('error', e => showErr('Error: ' + (e.message || '')));
+  window.addEventListener('unhandledrejection', e => showErr('Error: ' + ((e.reason && e.reason.message) || e.reason || '')));
+
   // populate writing/speaking selects (allow empty)
   const emptyOpt = '<option value="">—</option>';
   document.getElementById('wTask1').innerHTML = emptyOpt + bandOptions(null, 4);
@@ -651,8 +670,10 @@ async function runDiag() {
   el.className = 'auth-diag';
   async function test(label, url, opts) {
     const t0 = Date.now();
-    try { await withTimeout(fetch(url, opts), 8000); return label + ' ✓ ' + (Date.now() - t0) + 'ms'; }
-    catch (e) { return label + ' ✗ ' + (/timed out/i.test(e.message || '') ? 'timeout' : 'blocked'); }
+    try {
+      await withTimeout((async () => { const res = await fetch(url, opts); await res.text(); })(), 8000);
+      return label + ' ✓ ' + (Date.now() - t0) + 'ms';
+    } catch (e) { return label + ' ✗ ' + (/timed out/i.test(e.message || '') ? 'timeout' : 'blocked'); }
   }
   const auth = await test('Auth', authUrl('signInWithPassword'),
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'd@d.test', password: 'x', returnSecureToken: true }) });
