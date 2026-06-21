@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '13';
+const BUILD = '14';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -724,7 +724,9 @@ function setupAuthUI() {
     const last = document.getElementById('auLast').value.trim();
     if (!email || !pass) { setAuthMsg('Enter your email and password.', 'error'); return; }
     submit.disabled = true;
-    setAuthMsg('Please wait…', '');
+    let waitSecs = 0;
+    setAuthMsg('Please wait… (0s)', '');
+    const ticker = setInterval(() => setAuthMsg('Please wait… (' + (++waitSecs) + 's)', ''), 1000);
     try {
       const isSignup = (mode === 'signup');
       let auth;
@@ -757,8 +759,10 @@ function setupAuthUI() {
       setAuthMsg('', '');
       syncProfile(isSignup);
     } catch (err) {
+      clearInterval(ticker);
       setAuthMsg(friendlyAuthError(err), 'error');
     } finally {
+      clearInterval(ticker);
       submit.disabled = false;
     }
   });
