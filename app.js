@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '14';
+const BUILD = '15';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -55,15 +55,30 @@ function normalizeState(data) {
    (Reading the body separately was un-timed, so a proxy that stalls the
    response body could freeze the UI on "Please wait..." forever.)
    Retries once on a transient network drop. */
+/* visible on-screen log for diagnosing the sign-in flow */
+function dlog(msg) {
+  const el = document.getElementById('authLog');
+  if (!el) return;
+  const lines = (el.textContent ? el.textContent.split('\n') : []);
+  lines.push(msg);
+  el.textContent = lines.slice(-9).join('\n');
+}
+
 async function httpRequest(url, opts, attempt) {
   attempt = attempt || 1;
+  const tag = (url.split('?')[0].split('/').pop() || '').split(':').pop().slice(0, 18);
+  const t0 = Date.now();
+  dlog('→ ' + ((opts && opts.method) || 'GET') + ' ' + tag + (attempt > 1 ? ' (retry)' : ''));
   try {
-    return await withTimeout((async () => {
+    const out = await withTimeout((async () => {
       const res = await fetch(url, opts);
       const text = await res.text();
       return { ok: res.ok, status: res.status, text };
     })(), 10000);
+    dlog('← ' + tag + ' HTTP ' + out.status + ' (' + (Date.now() - t0) + 'ms)');
+    return out;
   } catch (e) {
+    dlog('✗ ' + tag + ': ' + (e.message || 'error').slice(0, 26) + ' (' + (Date.now() - t0) + 'ms)');
     const transient = /failed to fetch|networkerror|load failed|timed out/i.test(e.message || '');
     if (transient && attempt < 2) {
       await new Promise(r => setTimeout(r, 600 * attempt));
@@ -727,6 +742,8 @@ function setupAuthUI() {
     let waitSecs = 0;
     setAuthMsg('Please wait… (0s)', '');
     const ticker = setInterval(() => setAuthMsg('Please wait… (' + (++waitSecs) + 's)', ''), 1000);
+    const logEl = document.getElementById('authLog'); if (logEl) logEl.textContent = '';
+    dlog('--- ' + mode + ' ---');
     try {
       const isSignup = (mode === 'signup');
       let auth;
@@ -748,6 +765,7 @@ function setupAuthUI() {
       }
       // Auth succeeded — get INTO the app immediately; sync Firestore in the
       // background so a slow/blocked data server never freezes the login.
+      dlog('auth ok, opening app');
       setSession(auth);
       currentUser.email = email;
       currentUser.fullName = isSignup ? (first + ' ' + last).trim() : (currentUser.fullName || email.split('@')[0]);
@@ -757,9 +775,11 @@ function setupAuthUI() {
       showApp();
       render(); updateLive();
       setAuthMsg('', '');
+      dlog('app shown ✓');
       syncProfile(isSignup);
     } catch (err) {
       clearInterval(ticker);
+      dlog('STOP: ' + (err.message || err).toString().slice(0, 40));
       setAuthMsg(friendlyAuthError(err), 'error');
     } finally {
       clearInterval(ticker);

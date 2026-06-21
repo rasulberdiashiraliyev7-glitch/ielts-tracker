@@ -337,6 +337,14 @@ a { text-decoration: none; color: inherit; }
 .auth-diag { text-align: center; font-size: 12px; margin-top: 6px; min-height: 16px; }
 .auth-diag.ok { color: var(--teal-dark); }
 .auth-diag.bad { color: #e11d48; font-weight: 500; }
+.auth-log {
+  margin: 10px 0 0; padding: 8px 10px; text-align: left;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+  line-height: 1.5; color: var(--text-muted); white-space: pre-wrap;
+  background: var(--teal-50); border: 1px solid var(--border);
+  border-radius: 8px; max-height: 130px; overflow: auto; min-height: 0;
+}
+.auth-log:empty { display: none; }
 
 /* ============ Admin ============ */
 .admin-table th, .admin-table td { white-space: nowrap; }
