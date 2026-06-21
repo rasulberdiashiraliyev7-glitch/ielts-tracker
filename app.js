@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '16';
+const BUILD = '17';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -673,28 +673,6 @@ function init() {
 
   setupAuthUI();
   initCloud();
-  runDiag();
-}
-
-/* On-screen connectivity self-test: can THIS browser reach BOTH Firebase
-   services — Auth (identitytoolkit) and Data (firestore)? */
-async function runDiag() {
-  const el = document.getElementById('authDiag');
-  if (!el || !window.FIREBASE_API_KEY) return;
-  el.textContent = 'Checking server…';
-  el.className = 'auth-diag';
-  async function test(label, url, opts) {
-    const t0 = Date.now();
-    try {
-      await withTimeout((async () => { const res = await fetch(url, opts); await res.text(); })(), 8000);
-      return label + ' ✓ ' + (Date.now() - t0) + 'ms';
-    } catch (e) { return label + ' ✗ ' + (/timed out/i.test(e.message || '') ? 'timeout' : 'blocked'); }
-  }
-  const auth = await test('Auth', authUrl('signInWithPassword'),
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'd@d.test', password: 'x', returnSecureToken: true }) });
-  const data = await test('Data', fsBase() + '/users/__diag__', {});
-  el.textContent = auth + '  ·  ' + data;
-  el.className = 'auth-diag ' + (/✗/.test(auth + data) ? 'bad' : 'ok');
 }
 
 /* =====================================================================
