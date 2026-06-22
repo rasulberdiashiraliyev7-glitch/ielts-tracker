@@ -276,6 +276,14 @@ a { text-decoration: none; color: inherit; }
 .sp-foot .gap { color: var(--orange); font-weight: 600; }
 
 /* ============ Chart ============ */
+.chart-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chart-tab {
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  border: 1px solid var(--border); background: #fff; color: var(--text-muted);
+  padding: 7px 14px; border-radius: 999px; cursor: pointer; transition: .15s;
+}
+.chart-tab:hover { background: var(--teal-50); color: var(--teal-dark); }
+.chart-tab.active { background: var(--teal); color: #fff; border-color: var(--teal); }
 .chart-box { position: relative; height: 320px; }
 .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
