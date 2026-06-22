@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '19';
+const BUILD = '20';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -449,9 +449,11 @@ function renderChart() {
     const count = chartView === 'listening' ? 4 : 3;
     const word = chartView === 'listening' ? 'Section' : 'Passage';
     for (let i = 0; i < count; i++) {
-      datasets.push(lineDS(word + ' ' + (i + 1),
+      const ds = lineDS(word + ' ' + (i + 1),
         list.map(a => { const arr = a[chartView] && a[chartView][arrName]; return arr && arr[i] != null ? arr[i] : null; }),
-        PART_COLORS[i]));
+        PART_COLORS[i]);
+      if (i % 2 === 1) ds.borderDash = [7, 4];  // alternate dashes so overlapping lines stay visible
+      datasets.push(ds);
     }
     yMin = 0; yMax = chartView === 'listening' ? 10 : 14;
     yTitle = 'Correct answers'; yStep = chartView === 'listening' ? 1 : 2; decimals = 0;
