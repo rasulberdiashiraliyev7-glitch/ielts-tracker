@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '18';
+const BUILD = '19';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -875,14 +875,36 @@ function saveSession() {
   } catch (e) {}
 }
 
+/* Union cloud + local attempts by date+label so a result added during the
+   background sync window is never wiped (local values win per skill). */
+function unionAttempts(cloudArr, localArr) {
+  const keyOf = x => (x.date || '') + '||' + (x.label || '');
+  const out = (cloudArr || []).map(a => ({ ...a }));
+  const idx = new Map(out.map((a, i) => [keyOf(a), i]));
+  (localArr || []).forEach(a => {
+    const k = keyOf(a);
+    if (idx.has(k)) {
+      const t = out[idx.get(k)];
+      SKILLS.forEach(s => { if (a[s.key]) t[s.key] = a[s.key]; });
+    } else {
+      out.push({ ...a }); idx.set(k, out.length - 1);
+    }
+  });
+  return out;
+}
+
 function applyProfile(prof) {
   currentUser.fullName = prof.full_name || currentUser.fullName || '';
   currentUser.email = prof.email || currentUser.email || '';
   currentUser.role = prof.is_admin ? 'admin' : 'student';
   saveSession();
   if (prof.data && (prof.data.attempts || prof.data.targets)) {
-    state = normalizeState(prof.data);
+    const cloud = normalizeState(prof.data);
+    const merged = unionAttempts(cloud.attempts, state.attempts);
+    const grewLocally = merged.length !== cloud.attempts.length;
+    state = { targets: cloud.targets, attempts: merged };
     consolidate();
+    if (grewLocally) save();   // push results added during the sync window back to the cloud
   }
   refreshTopbar();
   render(); updateLive();
