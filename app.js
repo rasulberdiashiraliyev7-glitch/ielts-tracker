@@ -38,6 +38,8 @@ const DEFAULT_TARGETS = { listening: 7, reading: 7, writing: 6.5, speaking: 6.5 
 /* ---------- State ---------- */
 let state = { targets: { ...DEFAULT_TARGETS }, attempts: [] };
 let chart = null;
+let lastAttemptTimestamp = 0;
+let attemptSerial = 0;
 
 /* ---------- Cloud / auth globals (Firebase REST — Google infra) ---------- */
 let currentUser = null;   // { uid, fullName, email, role, idToken, refreshToken, expiresAt }
@@ -272,7 +274,7 @@ function renderRing() {
   const toGo = current == null ? null : Math.max(0, roundHalf(target - current));
   const el = document.getElementById('overallToGo');
   if (toGo == null) { el.textContent = '—'; }
-  else if (toGo === 0) { el.textContent = 'Goal reached! 🎉'; el.classList.remove('accent'); }
+  else if (toGo === 0) { el.textContent = 'Goal reached'; el.classList.remove('accent'); }
   else { el.textContent = `${fmtBand(toGo)} band`; el.classList.add('accent'); }
 }
 
@@ -352,7 +354,7 @@ function renderMotivation() {
   const cur = latestOverall();
   const tgt = targetOverall();
   if (cur != null && cur >= tgt) {
-    title.textContent = 'Goal smashed! 🎉';
+    title.textContent = 'Goal reached';
     text.textContent = `Your overall band ${fmtBand(cur)} meets your ${fmtBand(tgt)} target. Keep it steady before test day.`;
   } else if (worst && worst.gap > 0) {
     title.textContent = `Focus on ${worst.name}`;
@@ -367,13 +369,18 @@ function renderMotivation() {
 function renderHistory() {
   const body = document.getElementById('historyBody');
   const empty = document.getElementById('historyEmpty');
+  const summary = document.getElementById('historySummary');
   const list = sortedAttempts().reverse();
   body.innerHTML = '';
   empty.style.display = list.length ? 'none' : 'block';
+  if (summary) {
+    summary.textContent = list.length ? `${list.length} attempt${list.length === 1 ? '' : 's'} logged` : 'No attempts logged yet';
+  }
 
   list.forEach(att => {
     const tr = document.createElement('tr');
     const cell = key => att[key]?.band != null ? fmtBand(att[key].band) : '<span class="muted">—</span>';
+    const label = att.label || 'Untitled attempt';
     tr.innerHTML = `
       <td>${formatDate(att.date)}</td>
       <td class="muted">${att.label || '—'}</td>
@@ -382,7 +389,7 @@ function renderHistory() {
       <td class="band-cell">${cell('writing')}</td>
       <td class="band-cell">${cell('speaking')}</td>
       <td class="band-overall">${fmtBand(overallOf(att))}</td>
-      <td><button class="del-btn" data-id="${att.id}" title="Delete">✕</button></td>`;
+      <td><button class="del-btn" data-id="${att.id}" title="Delete this test" aria-label="Delete ${escapeHtml(label)} from ${formatDate(att.date)}">Delete</button></td>`;
     body.appendChild(tr);
   });
   body.querySelectorAll('.del-btn').forEach(b => {
@@ -481,14 +488,14 @@ function renderChart() {
         legend: { display: false },
         tooltip: {
           backgroundColor: '#14293b', padding: 12, cornerRadius: 10,
-          titleFont: { family: 'Poppins', weight: '600' }, bodyFont: { family: 'Poppins' },
+          titleFont: { family: 'ui-sans-serif', weight: '600' }, bodyFont: { family: 'ui-sans-serif' },
           callbacks: { label: c => c.raw == null ? null : `${c.dataset.label}: ${Number(c.raw).toFixed(decimals)}` },
         },
       },
       scales: {
-        y: { min: yMin, max: yMax, ticks: { stepSize: yStep, font: { family: 'Poppins' } },
-             grid: { color: '#eef2f3' }, title: { display: true, text: yTitle, font: { family: 'Poppins' } } },
-        x: { grid: { display: false }, ticks: { font: { family: 'Poppins' }, maxRotation: 0, autoSkip: true } },
+        y: { min: yMin, max: yMax, ticks: { stepSize: yStep, font: { family: 'ui-sans-serif' } },
+             grid: { color: '#eef2f3' }, title: { display: true, text: yTitle, font: { family: 'ui-sans-serif' } } },
+        x: { grid: { display: false }, ticks: { font: { family: 'ui-sans-serif' }, maxRotation: 0, autoSkip: true } },
       },
     },
   };
@@ -535,7 +542,7 @@ function updateLive() {
 }
 
 function collectAttempt() {
-  const att = { id: 'a' + Date.now(), date: document.getElementById('dateInput').value,
+  const att = { id: nextAttemptId(), date: document.getElementById('dateInput').value,
                 label: document.getElementById('labelInput').value.trim() };
 
   const lSecs = readNums('.l-sec');
@@ -561,39 +568,36 @@ function collectAttempt() {
   return att;
 }
 
+function nextAttemptId() {
+  const stamp = Date.now();
+  attemptSerial = stamp <= lastAttemptTimestamp ? attemptSerial + 1 : 0;
+  lastAttemptTimestamp = stamp;
+  return 'a' + stamp + (attemptSerial ? '-' + attemptSerial : '');
+}
+
 function saveAttempt() {
   const att = collectAttempt();
   if (!att.date) { toast('Please pick a test date.'); return; }
   const hasAny = SKILLS.some(s => att[s.key]);
   if (!hasAny) { toast('Enter at least one skill score.'); return; }
 
-  // merge into an existing test with the same date + label, instead of a new row
-  const existing = state.attempts.find(a => sameTest(a, att));
-  if (existing) {
-    SKILLS.forEach(s => { if (att[s.key]) existing[s.key] = att[s.key]; });
-    toast('Added to that day\'s test ✓');
-  } else {
-    state.attempts.push(att);
-    toast('Result saved ✓');
-  }
+  state.attempts.push(att);
+  toast('Result saved ✓');
   save(); render();
   resetForm();
   document.getElementById('charts').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-/* two entries are the same test if they share a date and label */
-function sameTest(a, b) {
-  return (a.date || '') === (b.date || '') && (a.label || '') === (b.label || '');
-}
-
-/* one-time consolidation: merge older split rows that share date + label */
 function consolidate() {
   const merged = [];
+  const byId = new Map();
   state.attempts.forEach(a => {
-    const target = merged.find(m => sameTest(m, a));
-    if (target) {
+    const index = a.id ? byId.get(a.id) : undefined;
+    if (index != null) {
+      const target = merged[index];
       SKILLS.forEach(s => { if (a[s.key]) target[s.key] = a[s.key]; });
     } else {
+      if (a.id) byId.set(a.id, merged.length);
       merged.push(a);
     }
   });
@@ -877,19 +881,19 @@ function saveSession() {
   } catch (e) {}
 }
 
-/* Union cloud + local attempts by date+label so a result added during the
-   background sync window is never wiped (local values win per skill). */
 function unionAttempts(cloudArr, localArr) {
-  const keyOf = x => (x.date || '') + '||' + (x.label || '');
   const out = (cloudArr || []).map(a => ({ ...a }));
-  const idx = new Map(out.map((a, i) => [keyOf(a), i]));
+  const idx = new Map();
+  out.forEach((attempt, index) => {
+    if (attempt.id) idx.set(attempt.id, index);
+  });
   (localArr || []).forEach(a => {
-    const k = keyOf(a);
-    if (idx.has(k)) {
-      const t = out[idx.get(k)];
+    if (a.id && idx.has(a.id)) {
+      const t = out[idx.get(a.id)];
       SKILLS.forEach(s => { if (a[s.key]) t[s.key] = a[s.key]; });
     } else {
-      out.push({ ...a }); idx.set(k, out.length - 1);
+      out.push({ ...a });
+      if (a.id) idx.set(a.id, out.length - 1);
     }
   });
   return out;
@@ -1076,10 +1080,10 @@ function drawAdminChart(atts) {
     type: 'line', data: { labels, datasets: ds },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: true, labels: { font: { family: 'Poppins' }, usePointStyle: true } } },
+      plugins: { legend: { display: true, labels: { font: { family: 'ui-sans-serif' }, usePointStyle: true } } },
       scales: {
-        y: { min: 4, max: 9, ticks: { stepSize: 0.5, font: { family: 'Poppins' } }, grid: { color: '#eef2f3' } },
-        x: { grid: { display: false }, ticks: { font: { family: 'Poppins' } } },
+        y: { min: 4, max: 9, ticks: { stepSize: 0.5, font: { family: 'ui-sans-serif' } }, grid: { color: '#eef2f3' } },
+        x: { grid: { display: false }, ticks: { font: { family: 'ui-sans-serif' } } },
       },
     },
   };

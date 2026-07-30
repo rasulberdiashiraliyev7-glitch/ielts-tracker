@@ -15,9 +15,6 @@
   <meta property="og:title" content="IELTS Progress Tracker" />
   <meta property="og:description" content="Track your IELTS band scores across all four skills and visualize your growth toward your goal." />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='22'%20fill='%230d9488'/%3E%3Ctext%20x='50'%20y='72'%20font-size='60'%20font-family='Arial'%20font-weight='bold'%20fill='white'%20text-anchor='middle'%3EI%3C/text%3E%3C/svg%3E" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css?v=20" />
 </head>
 <body>
@@ -34,7 +31,7 @@
         <a href="#history" class="nav-link">History</a>
       </nav>
       <div class="topbar-actions">
-        <button class="btn btn-ghost" id="adminBtn" hidden>👑 Admin</button>
+        <button class="btn btn-ghost" id="adminBtn" hidden>Admin</button>
         <span class="user-name" id="userName"></span>
         <div class="avatar" id="avatar">R</div>
         <button class="btn btn-ghost" id="signOutBtn" hidden>Sign out</button>
@@ -76,10 +73,10 @@
         <p class="subtitle">Log each mock test and watch your band scores climb toward your goal.</p>
       </div>
       <div class="head-actions">
-        <button class="btn btn-ghost" id="exportBtn" title="Download a backup file">⬇ Export</button>
-        <button class="btn btn-ghost" id="importBtn" title="Restore from a backup file">⬆ Import</button>
+        <button class="btn btn-ghost" id="exportBtn" title="Download a backup file">Export</button>
+        <button class="btn btn-ghost" id="importBtn" title="Restore from a backup file">Import</button>
         <input type="file" id="importFile" accept="application/json,.json" hidden />
-        <button class="btn btn-danger-outline" id="resetBtn">🗑 Reset all</button>
+        <button class="btn btn-danger-outline" id="resetBtn">Reset all</button>
       </div>
     </div>
 
@@ -90,7 +87,7 @@
         <section class="card overall-card">
           <div class="card-head">
             <h2>Overall Progress</h2>
-            <span class="card-icon">📈</span>
+            <span class="card-icon" aria-hidden="true">01</span>
           </div>
 
           <div class="ring-wrap">
@@ -129,7 +126,7 @@
         <section class="card targets-card">
           <div class="card-head">
             <h2>Your Goal</h2>
-            <span class="card-icon">🎯</span>
+            <span class="card-icon" aria-hidden="true">GOAL</span>
           </div>
           <p class="hint">Set the band score you want for each skill.</p>
           <div class="target-grid" id="targetInputs">
@@ -139,7 +136,7 @@
 
         <!-- Motivational dark card -->
         <section class="card next-card">
-          <div class="next-icon">🚀</div>
+          <div class="next-icon" aria-hidden="true">NEXT</div>
           <div>
             <p class="next-label">Keep going</p>
             <p class="next-title" id="motivTitle">Log your first test</p>
@@ -154,7 +151,7 @@
         <section class="card entry-card">
           <div class="card-head">
             <h2>Add Test Result</h2>
-            <span class="card-icon">✏️</span>
+            <span class="card-icon" aria-hidden="true">ADD</span>
           </div>
 
           <div class="form-top">
@@ -235,7 +232,7 @@
           </div>
 
           <div class="form-actions">
-            <span class="form-hint">Same date &amp; label = one row. Fill the skills you practised — empty ones are skipped.</span>
+            <span class="form-hint">Each save creates a new history row. Fill the skills you practised — empty ones are skipped.</span>
             <button class="btn btn-primary" id="saveBtn">＋ Save result</button>
           </div>
         </section>
@@ -244,7 +241,7 @@
         <section class="card skills-card">
           <div class="card-head">
             <h2>Distance to Goal</h2>
-            <span class="card-icon">🏁</span>
+            <span class="card-icon" aria-hidden="true">GOAL</span>
           </div>
           <div class="skill-progress-list" id="skillProgress">
             <!-- injected -->
@@ -266,9 +263,12 @@
 
         <!-- HISTORY -->
         <section class="card history-card" id="history">
-          <div class="card-head">
-            <h2>Test History</h2>
-            <span class="card-icon">🗂</span>
+          <div class="card-head history-head">
+            <div>
+              <h2>Test History</h2>
+              <p class="card-subtitle" id="historySummary">No attempts logged yet</p>
+            </div>
+            <span class="card-icon" aria-hidden="true">LIST</span>
           </div>
           <div class="table-wrap">
             <table class="history-table">
@@ -276,13 +276,13 @@
                 <tr>
                   <th>Date</th><th>Label</th>
                   <th>L</th><th>R</th><th>W</th><th>S</th>
-                  <th>Overall</th><th></th>
+                  <th>Overall</th><th>Action</th>
                 </tr>
               </thead>
               <tbody id="historyBody"></tbody>
             </table>
           </div>
-          <p class="empty-note" id="historyEmpty">Your saved tests will appear here.</p>
+          <p class="empty-note" id="historyEmpty">No attempts yet. Add a result above to start your history.</p>
         </section>
       </div>
     </div>
@@ -291,14 +291,14 @@
     <section class="admin-panel" id="adminPanel" hidden>
       <div class="page-head">
         <div>
-          <h1>👑 Admin Dashboard <span class="pill pill-active" id="adminCount">0 students</span></h1>
+          <h1>Admin Dashboard <span class="pill pill-active" id="adminCount">0 students</span></h1>
           <p class="subtitle">Every student's IELTS progress at a glance.</p>
         </div>
         <button class="btn btn-ghost" id="adminCloseBtn">← Back to my dashboard</button>
       </div>
 
       <section class="card">
-        <div class="card-head"><h2>Students</h2><span class="card-icon">👥</span></div>
+        <div class="card-head"><h2>Students</h2><span class="card-icon" aria-hidden="true">LIST</span></div>
         <div class="table-wrap">
           <table class="history-table admin-table">
             <thead>
@@ -317,7 +317,7 @@
       <section class="card" id="adminDetailCard" hidden>
         <div class="card-head">
           <h2 id="adminDetailName">Student detail</h2>
-          <span class="card-icon">📊</span>
+          <span class="card-icon" aria-hidden="true">DETAIL</span>
         </div>
         <div class="admin-detail-bands" id="adminDetailBands"></div>
         <div class="chart-box" style="margin-top:18px;"><canvas id="adminChart"></canvas></div>
