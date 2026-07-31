@@ -63,6 +63,14 @@ All spacing uses a 4px base. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-
 - **States:** row hover, delete focus, empty guidance.
 - **Accessibility:** numeric columns use tabular figures; delete controls expose an attempt-specific accessible name.
 
+### Trend chart
+- **Structure:** title + explanation, four-cell summary, tablist, legend, plot, text description, and an equivalent data table.
+- **Default:** an overall-first “Attempt average” line with a dashed average-target reference. Skill and part detail is available through explicit tabs.
+- **States:** empty, one attempt, partial attempt, populated, target reached, and target gap.
+- **Data semantics:** missing values create visible breaks; lines are not smoothed across unlogged skills. Solid versus dashed lines and text labels supplement color.
+- **Responsive behavior:** 320px plot height on desktop/tablet and approximately 260px on mobile; tabs remain keyboard reachable and scroll within their own row when needed.
+- **Accessibility:** tabs use `role="tablist"`/`role="tab"` with `aria-selected`; the canvas is decorative because the live description and screen-reader data table expose the same values. Summary copy always includes latest value, change, target gap, and skill coverage.
+
 ## 6. Motion & Interaction
 
 Interactive transitions use 150–220ms ease-out for color, shadow, and transform. Progress ring and bars use the existing 400–900ms emphasis easing because they communicate score change. No decorative animation is introduced. `prefers-reduced-motion: reduce` disables transitions and smooth scrolling.

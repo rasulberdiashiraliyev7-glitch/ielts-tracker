@@ -15,7 +15,7 @@
   <meta property="og:title" content="IELTS Progress Tracker" />
   <meta property="og:description" content="Track your IELTS band scores across all four skills and visualize your growth toward your goal." />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='22'%20fill='%230d9488'/%3E%3Ctext%20x='50'%20y='72'%20font-size='60'%20font-family='Arial'%20font-weight='bold'%20fill='white'%20text-anchor='middle'%3EI%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="styles.css?v=20" />
+  <link rel="stylesheet" href="styles.css?v=21" />
 </head>
 <body>
   <!-- ===== Top bar ===== -->
@@ -249,14 +249,21 @@
         </section>
 
         <!-- GROWTH CHART -->
-        <section class="card chart-card" id="charts">
+        <section class="card chart-card" id="charts" aria-labelledby="chartTitle">
           <div class="card-head">
-            <h2>Score Growth</h2>
-            <div class="chart-legend" id="chartLegend"></div>
+            <div>
+              <h2 id="chartTitle">Score Growth</h2>
+              <p class="card-subtitle">Start with your overall trend, then explore each skill.</p>
+            </div>
+            <span class="card-icon" aria-hidden="true">TREND</span>
           </div>
+          <div class="trend-summary" id="chartSummary" aria-live="polite"></div>
           <div class="chart-tabs" id="chartTabs"></div>
-          <div class="chart-box">
-            <canvas id="growthChart"></canvas>
+          <div class="chart-legend" id="chartLegend" aria-label="Chart legend"></div>
+          <div class="chart-box" id="chartPanel" role="tabpanel" tabindex="0" aria-labelledby="chart-tab-overall">
+            <div class="chart-canvas-wrap"><canvas id="growthChart" aria-hidden="true"></canvas></div>
+            <p class="chart-description" id="chartDescription" aria-live="polite"></p>
+            <div class="sr-only" id="chartDataTable"></div>
           </div>
           <p class="empty-note" id="chartEmpty">No data yet — add a test result to see your growth.</p>
         </section>
@@ -320,7 +327,7 @@
           <span class="card-icon" aria-hidden="true">DETAIL</span>
         </div>
         <div class="admin-detail-bands" id="adminDetailBands"></div>
-        <div class="chart-box" style="margin-top:18px;"><canvas id="adminChart"></canvas></div>
+        <div class="admin-chart-box" style="margin-top:18px;"><canvas id="adminChart"></canvas></div>
         <div class="table-wrap" style="margin-top:18px;">
           <table class="history-table">
             <thead><tr><th>Date</th><th>Label</th><th>L</th><th>R</th><th>W</th><th>S</th><th>Overall</th></tr></thead>
@@ -339,7 +346,7 @@
   <div class="toast" id="toast"></div>
 
   <script src="chart.umd.min.js?v=8"></script>
-  <script src="config.js?v=20"></script>
-  <script src="app.js?v=20"></script>
+  <script src="config.js?v=21"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>

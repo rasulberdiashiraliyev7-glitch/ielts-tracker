@@ -3,7 +3,7 @@
    ===================================================================== */
 
 const STORAGE_KEY = 'ielts_tracker_v1';
-const BUILD = '20';
+const BUILD = '21';
 
 const SKILLS = [
   { key: 'listening', name: 'Listening', color: '#0ea5e9', short: 'L' },
@@ -402,100 +402,376 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/* ----- Growth chart (overview + per-part drill-down) ----- */
-let chartView = 'all';
+/* ----- Growth chart (overall-first + per-skill drill-down) ----- */
+let chartView = 'overall';
 const CHART_TABS = [
-  { key: 'all', label: 'All skills' },
+  { key: 'overall', label: 'Overall' },
   { key: 'listening', label: 'Listening' },
   { key: 'reading', label: 'Reading' },
   { key: 'writing', label: 'Writing' },
   { key: 'speaking', label: 'Speaking' },
 ];
-const PART_COLORS = ['#0ea5e9', '#22c55e', '#f59e0b', '#8b5cf6'];
+const CHART_COLOR_FALLBACKS = Object.freeze({
+  '--listening': '#0ea5e9',
+  '--reading': '#0d9488',
+  '--writing': '#f59e0b',
+  '--speaking': '#8b5cf6',
+  '--accent-teal': '#0d9488',
+  '--ink-strong': '#14293b',
+  '--ink-muted': '#5f7180',
+  '--line-default': '#dce7e8',
+});
 
-function lineDS(label, data, color) {
+function resolveChartToken(token) {
+  const fallback = CHART_COLOR_FALLBACKS[token] || CHART_COLOR_FALLBACKS['--ink-strong'];
+  if (typeof document === 'undefined' || !document.documentElement || typeof getComputedStyle !== 'function') return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || fallback;
+}
+
+function chartColors() {
+  return {
+    listening: resolveChartToken('--listening'),
+    reading: resolveChartToken('--reading'),
+    writing: resolveChartToken('--writing'),
+    speaking: resolveChartToken('--speaking'),
+    accent: resolveChartToken('--accent-teal'),
+    ink: resolveChartToken('--ink-strong'),
+    muted: resolveChartToken('--ink-muted'),
+    grid: resolveChartToken('--line-default'),
+  };
+}
+
+function lineDS(label, data, color, extra = {}) {
   return {
     label, data, borderColor: color, backgroundColor: color,
-    tension: 0.35, spanGaps: true, borderWidth: 2.5, pointRadius: 4, pointHoverRadius: 6,
+    tension: 0.2, spanGaps: false, borderWidth: 2.5, pointRadius: 3.5, pointHoverRadius: 6,
+    fill: false, ...extra,
   };
+}
+
+function chartDateLabel(date) {
+  if (!date) return 'Undated';
+  const dt = new Date(date + 'T00:00:00');
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function chartLabels(list) {
+  const totals = new Map();
+  list.forEach((attempt, index) => {
+    const date = attempt.date || `attempt-${index}`;
+    totals.set(date, (totals.get(date) || 0) + 1);
+  });
+  const seen = new Map();
+  return list.map((attempt, index) => {
+    const date = attempt.date || `attempt-${index}`;
+    const count = (seen.get(date) || 0) + 1;
+    seen.set(date, count);
+    const total = totals.get(date);
+    return total > 1 ? `${chartDateLabel(attempt.date)} · #${count}` : chartDateLabel(attempt.date);
+  });
+}
+
+function coverageFor(attempt) {
+  if (!attempt) return 0;
+  return SKILLS.reduce((count, skill) => count + (attempt[skill.key]?.band != null ? 1 : 0), 0);
+}
+
+function metricFor(attempt, view) {
+  if (!attempt) return null;
+  return view === 'overall' ? overallOf(attempt) : (attempt[view]?.band ?? null);
+}
+
+function latestComparable(list, view) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const value = metricFor(list[i], view);
+    if (value != null) return { value, index: i, attempt: list[i] };
+  }
+  return null;
+}
+
+function previousComparable(list, view, index) {
+  for (let i = index - 1; i >= 0; i--) {
+    const value = metricFor(list[i], view);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+function formatChange(change) {
+  if (change == null) return 'No previous result';
+  if (change === 0) return 'No change';
+  return `${change > 0 ? '+' : ''}${fmtBand(change)} band`;
+}
+
+function targetForView(view) {
+  return view === 'overall' ? targetOverall() : state.targets[view];
+}
+
+function chartScrollBehavior() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth';
+}
+
+function chartAnimationDuration() {
+  return chartScrollBehavior() === 'auto' ? 0 : 450;
+}
+
+const CHART_PATTERNS = [null, [7, 4], [2, 3], [11, 3, 2, 3]];
+
+function patternFor(index) {
+  const borderDash = CHART_PATTERNS[index % CHART_PATTERNS.length];
+  return borderDash ? { borderDash } : {};
+}
+
+function bandAxis(values, target) {
+  const bounds = bandBounds([{ label: 'Measured', data: values }], target);
+  return { ...bounds, stepSize: 0.5, title: 'Band score', decimals: 1 };
+}
+
+function buildChartModel(attempts, view, targets) {
+  const currentView = view === 'all' ? 'overall' : view;
+  const targetSet = targets || state.targets;
+  const colors = chartColors();
+  const partColors = [colors.listening, colors.reading, colors.writing, colors.speaking];
+  const target = currentView === 'overall'
+    ? roundHalf(SKILLS.reduce((sum, skill) => sum + Number(targetSet[skill.key] ?? DEFAULT_TARGETS[skill.key]), 0) / SKILLS.length)
+    : Number(targetSet[currentView] ?? DEFAULT_TARGETS[currentView]);
+  const labels = chartLabels(attempts);
+  let datasets;
+  let axis;
+  if (currentView === 'overall') {
+    const average = attempts.map(overallOf);
+    datasets = [
+      lineDS('Attempt average', average, colors.accent, {
+        borderWidth: 3,
+        pointRadius: average.map((value, index) => value == null ? 0 : index === average.length - 1 ? 6 : 3.5),
+        pointHoverRadius: 7,
+      }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+    ];
+    axis = bandAxis(datasets[0].data, target);
+  } else if (currentView === 'listening' || currentView === 'reading') {
+    const key = currentView === 'listening' ? 'sections' : 'passages';
+    const count = currentView === 'listening' ? 4 : 3;
+    const word = currentView === 'listening' ? 'Section' : 'Passage';
+    datasets = Array.from({ length: count }, (_, index) => lineDS(word + ' ' + (index + 1), attempts.map(attempt => {
+      const parts = attempt[currentView]?.[key];
+      return parts && parts[index] != null ? parts[index] : null;
+    }), partColors[index], patternFor(index)));
+    axis = currentView === 'listening'
+      ? { min: 0, max: 10, stepSize: 2, title: 'Correct answers', decimals: 0 }
+      : { min: 0, max: 20, stepSize: 5, title: 'Correct answers', decimals: 0 };
+  } else if (currentView === 'writing') {
+    datasets = [
+      lineDS('Task 1', attempts.map(attempt => attempt.writing?.task1 ?? null), partColors[0], patternFor(0)),
+      lineDS('Task 2', attempts.map(attempt => attempt.writing?.task2 ?? null), partColors[3], patternFor(1)),
+      lineDS('Writing band', attempts.map(attempt => attempt.writing?.band ?? null), colors.writing, {
+        borderWidth: 3,
+        ...patternFor(2),
+        pointRadius: attempts.map((attempt, index) => attempt.writing?.band == null ? 0 : index === attempts.length - 1 ? 6 : 3.5),
+      }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+    ];
+    axis = bandAxis(datasets[2].data, target);
+  } else {
+    datasets = [
+      lineDS('Speaking band', attempts.map(attempt => attempt.speaking?.band ?? null), colors.speaking, {
+        borderWidth: 3,
+        pointRadius: attempts.map((attempt, index) => attempt.speaking?.band == null ? 0 : index === attempts.length - 1 ? 6 : 3.5),
+      }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+    ];
+    axis = bandAxis(datasets[0].data, target);
+  }
+  const latest = latestComparable(attempts, currentView);
+  const previous = latest ? previousComparable(attempts, currentView, latest.index) : null;
+  const change = latest && previous != null ? roundHalf(latest.value - previous) : null;
+  const gap = latest ? roundHalf(target - latest.value) : target;
+  return {
+    labels,
+    datasets,
+    axis,
+    summary: {
+      latest: latest ? fmtBand(latest.value) : 'No result',
+      change: formatChange(change),
+      gap: latest && gap <= 0 ? 'Target reached' : `${fmtBand(Math.max(0, gap))} band`,
+      coverage: `${latest ? coverageFor(latest.attempt) : 0} of 4 skills logged`,
+    },
+    rows: attempts.map((attempt, index) => ({ attempt, label: labels[index], values: datasets.filter(d => d.label !== 'Target').map(dataset => dataset.data[index]) })),
+  };
+}
+
+function renderTrendSummary(list) {
+  const wrap = document.getElementById('chartSummary');
+  if (!wrap) return;
+  const latest = latestComparable(list, chartView);
+  const previous = latest ? previousComparable(list, chartView, latest.index) : null;
+  const target = targetForView(chartView);
+  const gap = latest ? roundHalf(target - latest.value) : target;
+  const latestAttempt = latest ? latest.attempt : null;
+  const change = latest && previous != null ? roundHalf(latest.value - previous) : null;
+  const latestText = latest ? fmtBand(latest.value) : 'No result';
+  const gapText = latest && gap <= 0 ? 'Target reached' : `${fmtBand(Math.max(0, gap))} band`;
+  const gapClass = latest && gap <= 0 ? 'positive' : 'warning';
+  const changeClass = change == null ? 'neutral' : change > 0 ? 'positive' : change < 0 ? 'warning' : 'neutral';
+  const coverageText = latestAttempt ? `${coverageFor(latestAttempt)} of 4 skills logged` : '0 of 4 skills logged';
+  wrap.innerHTML = `
+    <div class="trend-stat"><span class="trend-stat-label">Latest</span><strong class="trend-stat-value">${latestText}</strong></div>
+    <div class="trend-stat"><span class="trend-stat-label">Change</span><strong class="trend-stat-value ${changeClass}">${formatChange(change)}</strong></div>
+    <div class="trend-stat"><span class="trend-stat-label">Target gap</span><strong class="trend-stat-value ${gapClass}">${gapText}</strong></div>
+    <div class="trend-stat"><span class="trend-stat-label">Coverage</span><strong class="trend-stat-value neutral">${coverageText}</strong></div>`;
 }
 
 function renderChartTabs() {
   const wrap = document.getElementById('chartTabs');
   if (!wrap) return;
   wrap.innerHTML = '';
+  wrap.setAttribute('role', 'tablist');
+  wrap.setAttribute('aria-label', 'Choose a trend view');
+  const panel = document.getElementById('chartPanel');
+  if (panel) {
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', 'chart-tab-' + chartView);
+  }
   CHART_TABS.forEach(t => {
     const b = document.createElement('button');
     b.className = 'chart-tab' + (chartView === t.key ? ' active' : '');
+    b.type = 'button';
+    b.setAttribute('id', 'chart-tab-' + t.key);
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', 'chartPanel');
+    b.setAttribute('aria-selected', chartView === t.key ? 'true' : 'false');
+    b.tabIndex = chartView === t.key ? 0 : -1;
     b.textContent = t.label;
     b.addEventListener('click', () => { chartView = t.key; renderChart(); });
+    b.addEventListener('keydown', e => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      const index = CHART_TABS.findIndex(tab => tab.key === chartView);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? CHART_TABS.length - 1 :
+        (index + (e.key === 'ArrowRight' ? 1 : -1) + CHART_TABS.length) % CHART_TABS.length;
+      chartView = CHART_TABS[next].key;
+      renderChart();
+      document.getElementById('chart-tab-' + chartView)?.focus();
+    });
     wrap.appendChild(b);
   });
 }
 
+function bandBounds(datasets, target) {
+  const values = datasets.filter(d => d.label !== 'Target').flatMap(d => d.data).filter(v => v != null);
+  if (target != null) values.push(target);
+  if (!values.length) return { min: 4, max: 9 };
+  let min = Math.max(0, Math.floor((Math.min(...values) - 0.5) * 2) / 2);
+  let max = Math.min(9, Math.ceil((Math.max(...values) + 0.5) * 2) / 2);
+  if (max - min < 2) {
+    min = Math.max(0, min - 0.5);
+    max = Math.min(9, max + 0.5);
+  }
+  return { min, max };
+}
+
+function renderChartLegend(datasets) {
+  const wrap = document.getElementById('chartLegend');
+  if (!wrap) return;
+  wrap.innerHTML = datasets.map(d => {
+    const pattern = !d.borderDash?.length ? 'solid' : d.borderDash.length > 2 ? 'dash-dot' : d.borderDash[0] <= 3 ? 'dotted' : 'dashed';
+    const dash = d.borderDash || [];
+    let cursor = 0;
+    const stops = dash.map((length, index) => {
+      const start = cursor;
+      cursor += length;
+      return `${index % 2 ? 'transparent' : 'var(--legend-color)'} ${start}px ${cursor}px`;
+    }).join(', ');
+    const style = `--legend-color:${d.borderColor}${stops ? `;background:repeating-linear-gradient(90deg, ${stops})` : ''}`;
+    const patternId = dash.length ? dash.join('-') : 'solid';
+    return `<span class="legend-item"><span class="legend-swatch pattern-${pattern}" data-pattern="${patternId}" style="${style}" aria-hidden="true"></span>${d.label}</span>`;
+  }).join('');
+}
+
+function renderChartData(list, datasets, labels, decimals) {
+  const table = document.getElementById('chartDataTable');
+  const description = document.getElementById('chartDescription');
+  if (!table || !description) return;
+  const latest = latestComparable(list, chartView);
+  const target = targetForView(chartView);
+  const currentName = chartView === 'overall' ? 'attempt average' : `${CHART_TABS.find(t => t.key === chartView).label} score`;
+  description.textContent = latest
+    ? `${currentName} is ${fmtBand(latest.value)} on ${formatDate(latest.attempt.date)}. ${coverageFor(latest.attempt)} of 4 skills logged in the latest attempt. Target: ${fmtBand(target)}.`
+    : `No ${currentName} has been logged yet. Target: ${fmtBand(target)}.`;
+  const headers = chartView === 'overall' ? ['Attempt', 'Date', 'Label', 'Average', 'Coverage'] :
+    ['Attempt', 'Date', 'Label', ...datasets.filter(d => d.label !== 'Target').map(d => d.label)];
+  const rows = list.map((attempt, index) => {
+    const values = chartView === 'overall'
+      ? [fmtBand(overallOf(attempt)), `${coverageFor(attempt)} of 4 logged`]
+      : datasets.filter(d => d.label !== 'Target').map(d => {
+        const value = d.data[index]; return value == null ? '—' : Number(value).toFixed(decimals);
+      });
+    return `<tr><td>${labels[index]}</td><td>${formatDate(attempt.date)}</td><td>${escapeHtml(attempt.label || '—')}</td>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  }).join('');
+  table.innerHTML = `<table><caption>${escapeHtml(currentName)} data</caption><thead><tr>${headers.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
 function renderChart() {
-  if (typeof Chart === 'undefined') return;  // chart library unavailable — skip gracefully
   const list = sortedAttempts();
   const empty = document.getElementById('chartEmpty');
-  const box = document.querySelector('.chart-box');
+  const box = document.getElementById('chartPanel');
+  const description = document.getElementById('chartDescription');
+  renderChartTabs();
+  renderTrendSummary(list);
+  if (!empty || !box) return;
   const hasData = list.length > 0;
   empty.style.display = hasData ? 'none' : 'block';
   box.style.display = hasData ? 'block' : 'none';
-  renderChartTabs();
-
-  if (!hasData) { if (chart) { chart.destroy(); chart = null; } return; }
-
-  const labels = list.map(a => a.label ? a.label : formatDate(a.date));
-  let datasets = [], yMin = 4, yMax = 9, yTitle = 'Band score', yStep = 0.5, decimals = 1;
-
-  if (chartView === 'all') {
-    datasets = SKILLS.map(s => lineDS(s.name, list.map(a => a[s.key]?.band ?? null), s.color));
-    datasets.push(Object.assign(lineDS('Overall', list.map(overallOf), '#14293b'), { borderWidth: 3, borderDash: [6, 4] }));
-  } else if (chartView === 'listening' || chartView === 'reading') {
-    const arrName = chartView === 'listening' ? 'sections' : 'passages';
-    const count = chartView === 'listening' ? 4 : 3;
-    const word = chartView === 'listening' ? 'Section' : 'Passage';
-    for (let i = 0; i < count; i++) {
-      const ds = lineDS(word + ' ' + (i + 1),
-        list.map(a => { const arr = a[chartView] && a[chartView][arrName]; return arr && arr[i] != null ? arr[i] : null; }),
-        PART_COLORS[i]);
-      if (i % 2 === 1) ds.borderDash = [7, 4];  // alternate dashes so overlapping lines stay visible
-      datasets.push(ds);
-    }
-    yMin = 0; yMax = chartView === 'listening' ? 10 : 14;
-    yTitle = 'Correct answers'; yStep = chartView === 'listening' ? 1 : 2; decimals = 0;
-  } else if (chartView === 'writing') {
-    datasets = [
-      lineDS('Task 1', list.map(a => a.writing && a.writing.task1 != null ? a.writing.task1 : null), PART_COLORS[0]),
-      lineDS('Task 2', list.map(a => a.writing && a.writing.task2 != null ? a.writing.task2 : null), PART_COLORS[3]),
-      Object.assign(lineDS('Writing band', list.map(a => a.writing?.band ?? null), '#f59e0b'), { borderDash: [6, 4] }),
-    ];
-  } else if (chartView === 'speaking') {
-    datasets = [lineDS('Speaking band', list.map(a => a.speaking?.band ?? null), '#8b5cf6')];
+  if (description && description.classList) description.classList.toggle('sr-only', !hasData);
+  if (typeof Chart === 'undefined') return;  // chart library unavailable — summary remains useful
+  if (!hasData) {
+    document.getElementById('chartLegend').innerHTML = '';
+    document.getElementById('chartDescription').textContent = 'Add a test result to plot your progress.';
+    document.getElementById('chartDataTable').innerHTML = '';
+    if (chart) { chart.destroy(); chart = null; }
+    return;
   }
 
-  // legend reflects the current view
-  document.getElementById('chartLegend').innerHTML = datasets
-    .map(d => `<span class="legend-item"><span class="legend-swatch" style="background:${d.borderColor}"></span>${d.label}</span>`).join('');
+  const model = buildChartModel(list, chartView, state.targets);
+  const colors = chartColors();
+  const labels = model.labels;
+  const datasets = model.datasets;
+  const bounds = model.axis;
+  const yTitle = bounds.title;
+  const yStep = bounds.stepSize;
+  const decimals = bounds.decimals;
+  renderChartLegend(datasets);
+  renderChartData(list, datasets, labels, decimals);
 
   const cfg = {
-    type: 'line',
-    data: { labels, datasets },
+    type: 'line', data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: { duration: chartAnimationDuration() },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#14293b', padding: 12, cornerRadius: 10,
+          backgroundColor: colors.ink, padding: 12, cornerRadius: 10,
           titleFont: { family: 'ui-sans-serif', weight: '600' }, bodyFont: { family: 'ui-sans-serif' },
-          callbacks: { label: c => c.raw == null ? null : `${c.dataset.label}: ${Number(c.raw).toFixed(decimals)}` },
+          callbacks: {
+            title: items => {
+              const attempt = list[items[0]?.dataIndex];
+              return attempt ? `${formatDate(attempt.date)}${attempt.label ? ` · ${attempt.label}` : ''}` : '';
+            },
+            label: c => c.raw == null ? null : `${c.dataset.label}: ${Number(c.raw).toFixed(decimals)}`,
+            afterBody: items => {
+              const attempt = list[items[0]?.dataIndex];
+              return attempt ? [`Coverage: ${coverageFor(attempt)} of 4 skills`] : [];
+            },
+          },
         },
       },
       scales: {
-        y: { min: yMin, max: yMax, ticks: { stepSize: yStep, font: { family: 'ui-sans-serif' } },
-             grid: { color: '#eef2f3' }, title: { display: true, text: yTitle, font: { family: 'ui-sans-serif' } } },
-        x: { grid: { display: false }, ticks: { font: { family: 'ui-sans-serif' }, maxRotation: 0, autoSkip: true } },
+        y: { min: bounds.min, max: bounds.max, ticks: { stepSize: yStep, font: { family: 'ui-sans-serif' } },
+          grid: { color: colors.grid }, title: { display: true, text: yTitle, font: { family: 'ui-sans-serif' } } },
+        x: { grid: { display: false }, ticks: { font: { family: 'ui-sans-serif' }, maxRotation: 0, autoSkip: true, autoSkipPadding: 18 } },
       },
     },
   };
@@ -585,7 +861,7 @@ function saveAttempt() {
   toast('Result saved ✓');
   save(); render();
   resetForm();
-  document.getElementById('charts').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('charts').scrollIntoView({ behavior: chartScrollBehavior(), block: 'center' });
 }
 
 function consolidate() {
@@ -1060,29 +1336,33 @@ function openStudentDetail(r) {
 
   drawAdminChart(atts);
   document.getElementById('adminDetailCard').hidden = false;
-  document.getElementById('adminDetailCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('adminDetailCard').scrollIntoView({ behavior: chartScrollBehavior(), block: 'start' });
 }
 
 function drawAdminChart(atts) {
   if (typeof Chart === 'undefined') return;
   const labels = atts.map(a => a.label ? a.label : formatDate(a.date));
-  const ds = SKILLS.map(s => ({
+  const colors = chartColors();
+  const partColors = [colors.listening, colors.reading, colors.writing, colors.speaking];
+  const ds = SKILLS.map((s, index) => ({
     label: s.name, data: atts.map(a => a[s.key]?.band ?? null),
-    borderColor: s.color, backgroundColor: s.color,
-    tension: .35, spanGaps: true, borderWidth: 2.5, pointRadius: 3,
+    borderColor: partColors[index], backgroundColor: partColors[index],
+    tension: .2, spanGaps: false, borderWidth: 2.5, pointRadius: 3, ...patternFor(index),
   }));
   ds.push({
     label: 'Overall', data: atts.map(overallOf),
-    borderColor: '#14293b', backgroundColor: '#14293b',
-    borderWidth: 3, borderDash: [6, 4], tension: .35, spanGaps: true, pointRadius: 3,
+    borderColor: colors.ink, backgroundColor: colors.ink,
+    borderWidth: 3, borderDash: [6, 4], tension: .2, spanGaps: false, pointRadius: 3,
   });
+  const bounds = bandBounds(ds, null);
   const cfg = {
     type: 'line', data: { labels, datasets: ds },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: { duration: chartAnimationDuration() },
       plugins: { legend: { display: true, labels: { font: { family: 'ui-sans-serif' }, usePointStyle: true } } },
       scales: {
-        y: { min: 4, max: 9, ticks: { stepSize: 0.5, font: { family: 'ui-sans-serif' } }, grid: { color: '#eef2f3' } },
+        y: { min: bounds.min, max: bounds.max, ticks: { stepSize: 0.5, font: { family: 'ui-sans-serif' } }, grid: { color: colors.grid } },
         x: { grid: { display: false }, ticks: { font: { family: 'ui-sans-serif' } } },
       },
     },
