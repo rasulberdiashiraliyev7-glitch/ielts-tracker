@@ -404,6 +404,7 @@ function formatDate(d) {
 
 /* ----- Growth chart (overall-first + per-skill drill-down) ----- */
 let chartView = 'overall';
+let chartSeries = 'all';
 const CHART_TABS = [
   { key: 'overall', label: 'Overall' },
   { key: 'listening', label: 'Listening' },
@@ -448,6 +449,13 @@ function lineDS(label, data, color, extra = {}) {
     tension: 0.2, spanGaps: false, borderWidth: 2.5, pointRadius: 3.5, pointHoverRadius: 6,
     fill: false, ...extra,
   };
+}
+
+function chartDatasetsForSeries(datasets, series) {
+  if (!series || series === 'all') return datasets;
+  const hasSeries = datasets.some(dataset => dataset.key === series);
+  if (!hasSeries) return datasets;
+  return datasets.filter(dataset => dataset.key === series || dataset.key === 'target');
 }
 
 function chartDateLabel(date) {
@@ -543,11 +551,12 @@ function buildChartModel(attempts, view, targets) {
     const average = attempts.map(overallOf);
     datasets = [
       lineDS('Attempt average', average, colors.accent, {
+        key: 'overall',
         borderWidth: 3,
         pointRadius: average.map((value, index) => value == null ? 0 : index === average.length - 1 ? 6 : 3.5),
         pointHoverRadius: 7,
       }),
-      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { key: 'target', borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
     ];
     axis = bandAxis(datasets[0].data, target);
   } else if (currentView === 'listening' || currentView === 'reading') {
@@ -557,29 +566,31 @@ function buildChartModel(attempts, view, targets) {
     datasets = Array.from({ length: count }, (_, index) => lineDS(word + ' ' + (index + 1), attempts.map(attempt => {
       const parts = attempt[currentView]?.[key];
       return parts && parts[index] != null ? parts[index] : null;
-    }), partColors[index], patternFor(index)));
+    }), partColors[index], { key: `${currentView === 'listening' ? 'section' : 'passage'}-${index + 1}`, ...patternFor(index) }));
     axis = currentView === 'listening'
       ? { min: 0, max: 10, stepSize: 2, title: 'Correct answers', decimals: 0 }
       : { min: 0, max: 20, stepSize: 5, title: 'Correct answers', decimals: 0 };
   } else if (currentView === 'writing') {
     datasets = [
-      lineDS('Task 1', attempts.map(attempt => attempt.writing?.task1 ?? null), partColors[0], patternFor(0)),
-      lineDS('Task 2', attempts.map(attempt => attempt.writing?.task2 ?? null), partColors[3], patternFor(1)),
+      lineDS('Task 1', attempts.map(attempt => attempt.writing?.task1 ?? null), partColors[0], { key: 'task-1', ...patternFor(0) }),
+      lineDS('Task 2', attempts.map(attempt => attempt.writing?.task2 ?? null), partColors[3], { key: 'task-2', ...patternFor(1) }),
       lineDS('Writing band', attempts.map(attempt => attempt.writing?.band ?? null), colors.writing, {
+        key: 'writing-band',
         borderWidth: 3,
         ...patternFor(2),
         pointRadius: attempts.map((attempt, index) => attempt.writing?.band == null ? 0 : index === attempts.length - 1 ? 6 : 3.5),
       }),
-      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { key: 'target', borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
     ];
     axis = bandAxis(datasets[2].data, target);
   } else {
     datasets = [
       lineDS('Speaking band', attempts.map(attempt => attempt.speaking?.band ?? null), colors.speaking, {
+        key: 'speaking-band',
         borderWidth: 3,
         pointRadius: attempts.map((attempt, index) => attempt.speaking?.band == null ? 0 : index === attempts.length - 1 ? 6 : 3.5),
       }),
-      lineDS('Target', attempts.map(() => target), colors.ink, { borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
+      lineDS('Target', attempts.map(() => target), colors.ink, { key: 'target', borderWidth: 1.5, borderDash: [6, 5], pointRadius: 0, pointHoverRadius: 0 }),
     ];
     axis = bandAxis(datasets[0].data, target);
   }
@@ -643,7 +654,7 @@ function renderChartTabs() {
     b.setAttribute('aria-selected', chartView === t.key ? 'true' : 'false');
     b.tabIndex = chartView === t.key ? 0 : -1;
     b.textContent = t.label;
-    b.addEventListener('click', () => { chartView = t.key; renderChart(); });
+    b.addEventListener('click', () => { chartView = t.key; chartSeries = 'all'; renderChart(); });
     b.addEventListener('keydown', e => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
       e.preventDefault();
@@ -651,6 +662,7 @@ function renderChartTabs() {
       const next = e.key === 'Home' ? 0 : e.key === 'End' ? CHART_TABS.length - 1 :
         (index + (e.key === 'ArrowRight' ? 1 : -1) + CHART_TABS.length) % CHART_TABS.length;
       chartView = CHART_TABS[next].key;
+      chartSeries = 'all';
       renderChart();
       document.getElementById('chart-tab-' + chartView)?.focus();
     });
@@ -674,7 +686,10 @@ function bandBounds(datasets, target) {
 function renderChartLegend(datasets) {
   const wrap = document.getElementById('chartLegend');
   if (!wrap) return;
-  wrap.innerHTML = datasets.map(d => {
+  const measurable = datasets.filter(d => d.label !== 'Target');
+  const buttons = [
+    `<button type="button" class="chart-series-button${chartSeries === 'all' ? ' active' : ''}" data-series="all" aria-pressed="${chartSeries === 'all'}"><span class="legend-swatch" style="--legend-color:var(--ink-muted)" aria-hidden="true"></span>All</button>`,
+    ...measurable.map(d => {
     const pattern = !d.borderDash?.length ? 'solid' : d.borderDash.length > 2 ? 'dash-dot' : d.borderDash[0] <= 3 ? 'dotted' : 'dashed';
     const dash = d.borderDash || [];
     let cursor = 0;
@@ -685,8 +700,22 @@ function renderChartLegend(datasets) {
     }).join(', ');
     const style = `--legend-color:${d.borderColor}${stops ? `;background:repeating-linear-gradient(90deg, ${stops})` : ''}`;
     const patternId = dash.length ? dash.join('-') : 'solid';
-    return `<span class="legend-item"><span class="legend-swatch pattern-${pattern}" data-pattern="${patternId}" style="${style}" aria-hidden="true"></span>${d.label}</span>`;
-  }).join('');
+    return `<button type="button" class="chart-series-button${chartSeries === d.key ? ' active' : ''}" data-series="${d.key}" aria-pressed="${chartSeries === d.key}"><span class="legend-swatch pattern-${pattern}" data-pattern="${patternId}" style="${style}" aria-hidden="true"></span>${d.label}</button>`;
+    }),
+  ];
+  const target = datasets.find(d => d.label === 'Target');
+  const targetLegend = target ? `<span class="legend-item"><span class="legend-swatch pattern-dashed" data-pattern="${target.borderDash?.join('-') || 'solid'}" style="--legend-color:${target.borderColor}" aria-hidden="true"></span>${target.label}</span>` : '';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', 'Choose a chart series');
+  wrap.innerHTML = buttons.join('') + targetLegend;
+  if (typeof wrap.querySelectorAll === 'function') {
+    wrap.querySelectorAll('[data-series]').forEach(button => {
+      button.addEventListener('click', () => {
+        chartSeries = button.dataset.series || 'all';
+        renderChart();
+      });
+    });
+  }
 }
 
 function renderChartData(list, datasets, labels, decimals) {
@@ -736,12 +765,13 @@ function renderChart() {
   const model = buildChartModel(list, chartView, state.targets);
   const colors = chartColors();
   const labels = model.labels;
-  const datasets = model.datasets;
+  const allDatasets = model.datasets;
+  const datasets = chartDatasetsForSeries(allDatasets, chartSeries);
   const bounds = model.axis;
   const yTitle = bounds.title;
   const yStep = bounds.stepSize;
   const decimals = bounds.decimals;
-  renderChartLegend(datasets);
+  renderChartLegend(allDatasets);
   renderChartData(list, datasets, labels, decimals);
 
   const cfg = {

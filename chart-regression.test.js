@@ -6,6 +6,7 @@ const source = fs.readFileSync('app.js', 'utf8')
   .replace(/document\.addEventListener\('DOMContentLoaded', init\);[\s\S]*$/, '') + `
 globalThis.__chartTest = {
   buildChartModel,
+  chartDatasetsForSeries,
   chartColors,
   bandAxis,
   chartScrollBehavior,
@@ -15,6 +16,7 @@ globalThis.__chartTest = {
   renderTrendSummary,
   renderChart,
   setView: view => { chartView = view; },
+  setSeries: series => { chartSeries = series; },
   setState: next => { state = next; },
 };
 `;
@@ -30,7 +32,8 @@ function node(tagName) {
     tabIndex: 0,
     setAttribute(name, value) { this.attributes[name] = String(value); },
     appendChild(child) { this.children.push(child); },
-    addEventListener() {},
+  addEventListener() {},
+    querySelectorAll() { return []; },
     focus() {},
     style: {},
     classList: { toggle() {} },
@@ -140,6 +143,29 @@ function testOverlappingSeriesHavePatternAndLegendEncodings() {
   assert.match(fields.chartLegend.innerHTML, /pattern-dotted/);
 }
 
+function testSeriesSelectionKeepsTargetAndIsolatesRequestedPart() {
+  const model = chart.buildChartModel([
+    { date: '2026-07-30', listening: { sections: [8, 6, 7, 9], band: 7 } },
+  ], 'listening', targets);
+  const selected = chart.chartDatasetsForSeries(model.datasets, 'section-3');
+  assert.deepEqual(Array.from(selected, dataset => dataset.key), ['section-3']);
+  assert.equal(chart.chartDatasetsForSeries(model.datasets, 'missing').length, model.datasets.length);
+
+  chart.setSeries('section-3');
+  chart.renderChartLegend(model.datasets);
+  assert.match(fields.chartLegend.innerHTML, /Section 1/);
+  assert.match(fields.chartLegend.innerHTML, /Section 3/);
+  assert.match(fields.chartLegend.innerHTML, /Section 4/);
+  assert.match(fields.chartLegend.innerHTML, /data-series="section-3"[^>]*aria-pressed="true"/);
+
+  const writing = chart.buildChartModel([
+    { date: '2026-07-30', writing: { task1: 6, task2: 6.5, band: 6.5 } },
+  ], 'writing', targets);
+  const writingSelected = chart.chartDatasetsForSeries(writing.datasets, 'task-2');
+  assert.deepEqual(Array.from(writingSelected, dataset => dataset.key), ['task-2', 'target']);
+  chart.setSeries('all');
+}
+
 function testCapturedChartConfigUsesModelBoundsAndPatterns() {
   context.window.matchMedia = () => ({ matches: false });
   chart.setView('reading');
@@ -190,6 +216,7 @@ testBandAndRawScaleBoundsIncludeAllValidValues();
 testTabsUseTabpanelSemanticsAndActiveLabel();
 testReducedMotionDisablesChartAnimation();
 testOverlappingSeriesHavePatternAndLegendEncodings();
+testSeriesSelectionKeepsTargetAndIsolatesRequestedPart();
 testCapturedChartConfigUsesModelBoundsAndPatterns();
 testChartPanelWrapperAndTokenDrivenConfig();
 testChartCssTokensAndMobileTabWrapping();

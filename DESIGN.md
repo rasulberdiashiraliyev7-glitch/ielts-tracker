@@ -66,6 +66,7 @@ All spacing uses a 4px base. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-
 ### Trend chart
 - **Structure:** title + explanation, four-cell summary, tablist, legend, plot, text description, and an equivalent data table.
 - **Default:** an overall-first “Attempt average” line with a dashed average-target reference. Skill and part detail is available through explicit tabs.
+- **Series controls:** the legend exposes an `aria-pressed` button for “All” and each measurable IELTS series. Selecting a Section, Passage, or Writing task isolates that series; views with a target reference retain that line for context.
 - **States:** empty, one attempt, partial attempt, populated, target reached, and target gap.
 - **Data semantics:** missing values create visible breaks; lines are not smoothed across unlogged skills. Solid versus dashed lines and text labels supplement color.
 - **Responsive behavior:** 320px plot height on desktop/tablet and approximately 260px on mobile; tabs remain keyboard reachable and scroll within their own row when needed.
