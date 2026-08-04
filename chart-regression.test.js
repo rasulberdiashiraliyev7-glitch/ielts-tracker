@@ -83,14 +83,14 @@ function testSameDayLabelsAndCoverageUseLatestComparableAttempt() {
   assert.match(fields.chartSummary.innerHTML, /4 of 4 skills logged/);
 }
 
-function testMissingValuesBreakEverySeries() {
+function testMissingValuesKeepEverySeriesConnected() {
   const model = chart.buildChartModel([
     { date: '2026-07-28', speaking: { band: 6 } },
     { date: '2026-07-29' },
     { date: '2026-07-30', speaking: { band: 7 } },
   ], 'speaking', targets);
   assert.deepEqual(model.datasets[0].data, [6, null, 7]);
-  assert.ok(model.datasets.every(dataset => dataset.spanGaps === false));
+  assert.ok(model.datasets.every(dataset => dataset.spanGaps === true));
 }
 
 function testBandAndRawScaleBoundsIncludeAllValidValues() {
@@ -173,7 +173,7 @@ function testCapturedChartConfigUsesModelBoundsAndPatterns() {
   chart.renderChart();
   assert.equal(context.__capturedChart.options.scales.y.max, 20);
   assert.ok(context.__capturedChart.data.datasets.some(dataset => dataset.data.includes(20)));
-  assert.ok(context.__capturedChart.data.datasets.every(dataset => dataset.spanGaps === false));
+  assert.ok(context.__capturedChart.data.datasets.every(dataset => dataset.spanGaps === true));
 
   chart.setView('writing');
   chart.setState({ targets, attempts: [{ date: '2026-07-30', writing: { task1: 3.5, task2: 4, band: 3.5 } }] });
@@ -211,7 +211,7 @@ function testChartCssTokensAndMobileTabWrapping() {
 }
 
 testSameDayLabelsAndCoverageUseLatestComparableAttempt();
-testMissingValuesBreakEverySeries();
+testMissingValuesKeepEverySeriesConnected();
 testBandAndRawScaleBoundsIncludeAllValidValues();
 testTabsUseTabpanelSemanticsAndActiveLabel();
 testReducedMotionDisablesChartAnimation();

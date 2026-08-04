@@ -446,7 +446,7 @@ function chartColors() {
 function lineDS(label, data, color, extra = {}) {
   return {
     label, data, borderColor: color, backgroundColor: color,
-    tension: 0.2, spanGaps: false, borderWidth: 2.5, pointRadius: 3.5, pointHoverRadius: 6,
+    tension: 0.2, spanGaps: true, borderWidth: 2.5, pointRadius: 3.5, pointHoverRadius: 6,
     fill: false, ...extra,
   };
 }
@@ -1377,12 +1377,12 @@ function drawAdminChart(atts) {
   const ds = SKILLS.map((s, index) => ({
     label: s.name, data: atts.map(a => a[s.key]?.band ?? null),
     borderColor: partColors[index], backgroundColor: partColors[index],
-    tension: .2, spanGaps: false, borderWidth: 2.5, pointRadius: 3, ...patternFor(index),
+    tension: .2, spanGaps: true, borderWidth: 2.5, pointRadius: 3, ...patternFor(index),
   }));
   ds.push({
     label: 'Overall', data: atts.map(overallOf),
     borderColor: colors.ink, backgroundColor: colors.ink,
-    borderWidth: 3, borderDash: [6, 4], tension: .2, spanGaps: false, pointRadius: 3,
+    borderWidth: 3, borderDash: [6, 4], tension: .2, spanGaps: true, pointRadius: 3,
   });
   const bounds = bandBounds(ds, null);
   const cfg = {
