@@ -451,22 +451,29 @@ function lineDS(label, data, color, extra = {}) {
   };
 }
 
-function averageForParts(parts) {
-  if (!Array.isArray(parts)) return null;
-  const values = parts
+function horizontalAverageData(values, length = values.length) {
+  const logged = values
     .filter(value => value != null && Number.isFinite(Number(value)))
     .map(Number);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  const average = logged.length
+    ? Math.round((logged.reduce((sum, value) => sum + value, 0) / logged.length) * 10) / 10
+    : null;
+  return Array.from({ length }, () => average);
 }
 
 function chartDatasetsForSeries(datasets, series) {
   if (!series || series === 'all') return datasets;
-  const hasSeries = datasets.some(dataset => dataset.key === series);
-  if (!hasSeries) return datasets;
+  const selected = datasets.find(dataset => dataset.key === series);
+  if (!selected) return datasets;
+  const isPartSeries = series.startsWith('section-') || series.startsWith('passage-');
   const keepAverage = dataset => dataset.key === 'average' && (
-    series === 'average' || series.startsWith('section-') || series.startsWith('passage-')
+    series === 'average' || isPartSeries
   );
-  return datasets.filter(dataset => dataset.key === series || dataset.key === 'target' || keepAverage(dataset));
+  return datasets
+    .filter(dataset => dataset.key === series || dataset.key === 'target' || keepAverage(dataset))
+    .map(dataset => dataset.key === 'average' && isPartSeries
+      ? { ...dataset, data: horizontalAverageData(selected.data) }
+      : dataset);
 }
 
 function chartDateLabel(date) {
@@ -578,11 +585,14 @@ function buildChartModel(attempts, view, targets) {
       const parts = attempt[currentView]?.[key];
       return parts && parts[index] != null ? parts[index] : null;
     }), partColors[index], { key: `${currentView === 'listening' ? 'section' : 'passage'}-${index + 1}`, ...patternFor(index) }));
-    const average = lineDS('Average', attempts.map(attempt => averageForParts(attempt[currentView]?.[key])), colors.accent, {
+    const average = lineDS('Average', horizontalAverageData(partDatasets.flatMap(dataset => dataset.data), attempts.length), colors.ink, {
       key: 'average',
-      borderWidth: 3,
-      pointRadius: 4,
-      pointHoverRadius: 6,
+      borderWidth: 2,
+      borderDash: [8, 5],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      tension: 0,
+      order: 1,
     });
     datasets = [...partDatasets, average];
     axis = currentView === 'listening'
@@ -752,7 +762,7 @@ function renderChartData(list, datasets, labels, decimals) {
     const values = chartView === 'overall'
       ? [fmtBand(overallOf(attempt)), `${coverageFor(attempt)} of 4 logged`]
       : datasets.filter(d => d.label !== 'Target').map(d => {
-        const value = d.data[index]; return value == null ? '—' : Number(value).toFixed(decimals);
+        const value = d.data[index]; return value == null ? '—' : Number(value).toFixed(d.key === 'average' ? 1 : decimals);
       });
     return `<tr><td>${labels[index]}</td><td>${formatDate(attempt.date)}</td><td>${escapeHtml(attempt.label || '—')}</td>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
   }).join('');
@@ -808,7 +818,7 @@ function renderChart() {
               const attempt = list[items[0]?.dataIndex];
               return attempt ? `${formatDate(attempt.date)}${attempt.label ? ` · ${attempt.label}` : ''}` : '';
             },
-            label: c => c.raw == null ? null : `${c.dataset.label}: ${Number(c.raw).toFixed(decimals)}`,
+            label: c => c.raw == null ? null : `${c.dataset.label}: ${Number(c.raw).toFixed(c.dataset.key === 'average' ? 1 : decimals)}`,
             afterBody: items => {
               const attempt = list[items[0]?.dataIndex];
               return attempt ? [`Coverage: ${coverageFor(attempt)} of 4 skills`] : [];

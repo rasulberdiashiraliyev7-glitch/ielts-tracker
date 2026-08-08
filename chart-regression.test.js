@@ -105,21 +105,75 @@ function testBandAndRawScaleBoundsIncludeAllValidValues() {
   assert.ok(reading.datasets.some(dataset => dataset.data.includes(20)));
 }
 
-function testSectionModelsIncludeAveragesAndKeepThemWithPartSelection() {
+function testPartViewsUseOneHorizontalAverageAcrossLoggedValues() {
   const listening = chart.buildChartModel([
     { date: '2026-07-28', listening: { sections: [4, 6, 8, 10] } },
     { date: '2026-07-29', listening: { sections: [6, 8, null, 10] } },
   ], 'listening', targets);
   assert.deepEqual(Array.from(listening.datasets, dataset => dataset.key), ['section-1', 'section-2', 'section-3', 'section-4', 'average']);
-  assert.deepEqual(Array.from(listening.datasets.find(dataset => dataset.key === 'average').data), [7, 8]);
-  assert.deepEqual(Array.from(chart.chartDatasetsForSeries(listening.datasets, 'section-3'), dataset => dataset.key), ['section-3', 'average']);
+  assert.deepEqual(Array.from(listening.datasets.find(dataset => dataset.key === 'average').data), [7.4, 7.4]);
 
   const reading = chart.buildChartModel([
     { date: '2026-07-28', reading: { passages: [18, 20, 22] } },
     { date: '2026-07-29', reading: { passages: [19, null, 21] } },
   ], 'reading', targets);
   assert.deepEqual(Array.from(reading.datasets.find(dataset => dataset.key === 'average').data), [20, 20]);
-  assert.deepEqual(Array.from(chart.chartDatasetsForSeries(reading.datasets, 'passage-2'), dataset => dataset.key), ['passage-2', 'average']);
+}
+
+function testPartSelectionRecalculatesTheHorizontalAverageForThatPart() {
+  const listening = chart.buildChartModel([
+    { date: '2026-07-28', listening: { sections: [4, 6, 8, 10] } },
+    { date: '2026-07-29', listening: { sections: [6, 8, null, 10] } },
+  ], 'listening', targets);
+  const section1 = chart.chartDatasetsForSeries(listening.datasets, 'section-1');
+  assert.deepEqual(Array.from(section1, dataset => dataset.key), ['section-1', 'average']);
+  assert.deepEqual(Array.from(section1.find(dataset => dataset.key === 'average').data), [5, 5]);
+  const section3 = chart.chartDatasetsForSeries(listening.datasets, 'section-3');
+  assert.deepEqual(Array.from(section3.find(dataset => dataset.key === 'average').data), [8, 8]);
+
+  const reading = chart.buildChartModel([
+    { date: '2026-07-28', reading: { passages: [18, 20, 22] } },
+    { date: '2026-07-29', reading: { passages: [19, null, 21] } },
+  ], 'reading', targets);
+  const passage2 = chart.chartDatasetsForSeries(reading.datasets, 'passage-2');
+  assert.deepEqual(Array.from(passage2, dataset => dataset.key), ['passage-2', 'average']);
+  assert.deepEqual(Array.from(passage2.find(dataset => dataset.key === 'average').data), [20, 20]);
+}
+
+function testAverageReferenceIsVisuallyDistinctFromTheMainSeries() {
+  const model = chart.buildChartModel([
+    { date: '2026-07-28', listening: { sections: [4, 6, 8, 10] } },
+    { date: '2026-07-29', listening: { sections: [6, 8, null, 10] } },
+  ], 'listening', targets);
+  const selected = chart.chartDatasetsForSeries(model.datasets, 'section-1');
+  const main = selected.find(dataset => dataset.key === 'section-1');
+  const average = selected.find(dataset => dataset.key === 'average');
+  assert.notEqual(average.borderColor, main.borderColor);
+  assert.ok(average.borderDash.length > 0);
+  assert.equal(average.pointRadius, 0);
+  assert.equal(average.pointHoverRadius, 0);
+  assert.equal(average.tension, 0);
+  assert.ok(average.order > (main.order ?? 0));
+}
+
+function testAverageReferenceUsesOneDecimalInTableAndTooltip() {
+  context.Chart = function Chart(_canvas, config) { context.__capturedChart = config; this.destroy = () => {}; };
+  chart.setView('listening');
+  chart.setSeries('all');
+  chart.setState({
+    targets,
+    attempts: [
+      { date: '2026-07-28', listening: { sections: [4, 6, 8, 10] } },
+      { date: '2026-07-29', listening: { sections: [6, 8, null, 10] } },
+    ],
+  });
+  chart.renderChart();
+  const average = context.__capturedChart.data.datasets.find(dataset => dataset.key === 'average');
+  const tooltipLabel = context.__capturedChart.options.plugins.tooltip.callbacks.label;
+  assert.match(fields.chartDataTable.innerHTML, /<th scope="col">Average<\/th>/);
+  assert.equal((fields.chartDataTable.innerHTML.match(/<td>7\.4<\/td>/g) || []).length, 2);
+  assert.equal(tooltipLabel({ raw: 7.4, dataset: average }), 'Average: 7.4');
+  fields.chartTabs.children = [];
 }
 
 function testTabsUseTabpanelSemanticsAndActiveLabel() {
@@ -231,7 +285,10 @@ function testChartCssTokensAndMobileTabWrapping() {
 testSameDayLabelsAndCoverageUseLatestComparableAttempt();
 testMissingValuesKeepEverySeriesConnected();
 testBandAndRawScaleBoundsIncludeAllValidValues();
-testSectionModelsIncludeAveragesAndKeepThemWithPartSelection();
+testPartViewsUseOneHorizontalAverageAcrossLoggedValues();
+testPartSelectionRecalculatesTheHorizontalAverageForThatPart();
+testAverageReferenceIsVisuallyDistinctFromTheMainSeries();
+testAverageReferenceUsesOneDecimalInTableAndTooltip();
 testTabsUseTabpanelSemanticsAndActiveLabel();
 testReducedMotionDisablesChartAnimation();
 testOverlappingSeriesHavePatternAndLegendEncodings();
