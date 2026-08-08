@@ -65,10 +65,10 @@ All spacing uses a 4px base. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-
 
 ### Trend chart
 - **Structure:** title + explanation, four-cell summary, tablist, legend, plot, text description, and an equivalent data table.
-- **Default:** an overall-first “Attempt average” line with a dashed average-target reference. Skill and part detail is available through explicit tabs.
-- **Series controls:** the legend exposes an `aria-pressed` button for “All” and each measurable IELTS series. Selecting a Section, Passage, or Writing task isolates that series; views with a target reference retain that line for context.
+- **Default:** an overall-first “Attempt average” line with a dashed average-target reference. Skill and part detail is available through explicit tabs; Listening and Reading also expose an `Average` comparison line computed from the logged parts.
+- **Series controls:** the legend exposes an `aria-pressed` button for “All” and each measurable IELTS series. Selecting a Section or Passage keeps the `Average` comparison line visible; selecting a Writing task isolates that task, and views with a target reference retain that line for context.
 - **States:** empty, one attempt, partial attempt, populated, target reached, and target gap.
-- **Data semantics:** missing values create visible breaks; lines are not smoothed across unlogged skills. Solid versus dashed lines and text labels supplement color.
+- **Data semantics:** Listening and Reading averages use the available logged parts for each attempt; an attempt with no logged parts has no average point. Valid points remain connected across missing intermediate attempts, while solid versus dashed lines and text labels supplement color.
 - **Responsive behavior:** 320px plot height on desktop/tablet and approximately 260px on mobile; tabs remain keyboard reachable and scroll within their own row when needed.
 - **Accessibility:** tabs use `role="tablist"`/`role="tab"` with `aria-selected`; the canvas is decorative because the live description and screen-reader data table expose the same values. Summary copy always includes latest value, change, target gap, and skill coverage.
 

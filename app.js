@@ -451,11 +451,22 @@ function lineDS(label, data, color, extra = {}) {
   };
 }
 
+function averageForParts(parts) {
+  if (!Array.isArray(parts)) return null;
+  const values = parts
+    .filter(value => value != null && Number.isFinite(Number(value)))
+    .map(Number);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
 function chartDatasetsForSeries(datasets, series) {
   if (!series || series === 'all') return datasets;
   const hasSeries = datasets.some(dataset => dataset.key === series);
   if (!hasSeries) return datasets;
-  return datasets.filter(dataset => dataset.key === series || dataset.key === 'target');
+  const keepAverage = dataset => dataset.key === 'average' && (
+    series === 'average' || series.startsWith('section-') || series.startsWith('passage-')
+  );
+  return datasets.filter(dataset => dataset.key === series || dataset.key === 'target' || keepAverage(dataset));
 }
 
 function chartDateLabel(date) {
@@ -563,10 +574,17 @@ function buildChartModel(attempts, view, targets) {
     const key = currentView === 'listening' ? 'sections' : 'passages';
     const count = currentView === 'listening' ? 4 : 3;
     const word = currentView === 'listening' ? 'Section' : 'Passage';
-    datasets = Array.from({ length: count }, (_, index) => lineDS(word + ' ' + (index + 1), attempts.map(attempt => {
+    const partDatasets = Array.from({ length: count }, (_, index) => lineDS(word + ' ' + (index + 1), attempts.map(attempt => {
       const parts = attempt[currentView]?.[key];
       return parts && parts[index] != null ? parts[index] : null;
     }), partColors[index], { key: `${currentView === 'listening' ? 'section' : 'passage'}-${index + 1}`, ...patternFor(index) }));
+    const average = lineDS('Average', attempts.map(attempt => averageForParts(attempt[currentView]?.[key])), colors.accent, {
+      key: 'average',
+      borderWidth: 3,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+    });
+    datasets = [...partDatasets, average];
     axis = currentView === 'listening'
       ? { min: 0, max: 10, stepSize: 2, title: 'Correct answers', decimals: 0 }
       : { min: 0, max: 20, stepSize: 5, title: 'Correct answers', decimals: 0 };

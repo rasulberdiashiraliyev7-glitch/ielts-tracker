@@ -105,6 +105,23 @@ function testBandAndRawScaleBoundsIncludeAllValidValues() {
   assert.ok(reading.datasets.some(dataset => dataset.data.includes(20)));
 }
 
+function testSectionModelsIncludeAveragesAndKeepThemWithPartSelection() {
+  const listening = chart.buildChartModel([
+    { date: '2026-07-28', listening: { sections: [4, 6, 8, 10] } },
+    { date: '2026-07-29', listening: { sections: [6, 8, null, 10] } },
+  ], 'listening', targets);
+  assert.deepEqual(Array.from(listening.datasets, dataset => dataset.key), ['section-1', 'section-2', 'section-3', 'section-4', 'average']);
+  assert.deepEqual(Array.from(listening.datasets.find(dataset => dataset.key === 'average').data), [7, 8]);
+  assert.deepEqual(Array.from(chart.chartDatasetsForSeries(listening.datasets, 'section-3'), dataset => dataset.key), ['section-3', 'average']);
+
+  const reading = chart.buildChartModel([
+    { date: '2026-07-28', reading: { passages: [18, 20, 22] } },
+    { date: '2026-07-29', reading: { passages: [19, null, 21] } },
+  ], 'reading', targets);
+  assert.deepEqual(Array.from(reading.datasets.find(dataset => dataset.key === 'average').data), [20, 20]);
+  assert.deepEqual(Array.from(chart.chartDatasetsForSeries(reading.datasets, 'passage-2'), dataset => dataset.key), ['passage-2', 'average']);
+}
+
 function testTabsUseTabpanelSemanticsAndActiveLabel() {
   chart.setView('reading');
   chart.renderChartTabs();
@@ -143,12 +160,12 @@ function testOverlappingSeriesHavePatternAndLegendEncodings() {
   assert.match(fields.chartLegend.innerHTML, /pattern-dotted/);
 }
 
-function testSeriesSelectionKeepsTargetAndIsolatesRequestedPart() {
+function testSeriesSelectionKeepsAverageContext() {
   const model = chart.buildChartModel([
     { date: '2026-07-30', listening: { sections: [8, 6, 7, 9], band: 7 } },
   ], 'listening', targets);
   const selected = chart.chartDatasetsForSeries(model.datasets, 'section-3');
-  assert.deepEqual(Array.from(selected, dataset => dataset.key), ['section-3']);
+  assert.deepEqual(Array.from(selected, dataset => dataset.key), ['section-3', 'average']);
   assert.equal(chart.chartDatasetsForSeries(model.datasets, 'missing').length, model.datasets.length);
 
   chart.setSeries('section-3');
@@ -156,6 +173,7 @@ function testSeriesSelectionKeepsTargetAndIsolatesRequestedPart() {
   assert.match(fields.chartLegend.innerHTML, /Section 1/);
   assert.match(fields.chartLegend.innerHTML, /Section 3/);
   assert.match(fields.chartLegend.innerHTML, /Section 4/);
+  assert.match(fields.chartLegend.innerHTML, /Average/);
   assert.match(fields.chartLegend.innerHTML, /data-series="section-3"[^>]*aria-pressed="true"/);
 
   const writing = chart.buildChartModel([
@@ -213,10 +231,11 @@ function testChartCssTokensAndMobileTabWrapping() {
 testSameDayLabelsAndCoverageUseLatestComparableAttempt();
 testMissingValuesKeepEverySeriesConnected();
 testBandAndRawScaleBoundsIncludeAllValidValues();
+testSectionModelsIncludeAveragesAndKeepThemWithPartSelection();
 testTabsUseTabpanelSemanticsAndActiveLabel();
 testReducedMotionDisablesChartAnimation();
 testOverlappingSeriesHavePatternAndLegendEncodings();
-testSeriesSelectionKeepsTargetAndIsolatesRequestedPart();
+testSeriesSelectionKeepsAverageContext();
 testCapturedChartConfigUsesModelBoundsAndPatterns();
 testChartPanelWrapperAndTokenDrivenConfig();
 testChartCssTokensAndMobileTabWrapping();
